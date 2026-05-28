@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chunk Reader</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">영어 지문 끊어읽기</p>
+          <h1>Chunk Reader</h1>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button" id="sampleButton" type="button" title="예문 불러오기" aria-label="예문 불러오기">↻</button>
+          <button class="icon-button" id="printButton" type="button" title="인쇄" aria-label="인쇄">⤓</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="input-pane">
+          <div class="pane-heading">
+            <h2>지문 입력</h2>
+            <span id="ocrState" class="state-pill">대기</span>
+          </div>
+
+          <label class="drop-zone" for="imageInput" id="dropZone">
+            <input id="imageInput" type="file" accept="image/*" />
+            <span class="drop-icon">＋</span>
+            <span class="drop-main">사진 선택</span>
+            <span class="drop-sub">교과서, 프린트, 모의고사 지문</span>
+          </label>
+
+          <figure class="preview-wrap" id="previewWrap" hidden>
+            <img id="previewImage" alt="업로드한 영어 지문 사진" />
+          </figure>
+
+          <div class="field-group">
+            <label for="sourceText">추출 텍스트</label>
+            <textarea id="sourceText" spellcheck="false" placeholder="사진에서 추출된 텍스트가 여기에 들어옵니다. 직접 붙여넣어도 됩니다."></textarea>
+          </div>
+
+          <div class="control-grid">
+            <label class="select-label">
+              청킹 강도
+              <select id="chunkLevel">
+                <option value="balanced" selected>표준</option>
+                <option value="fine">촘촘하게</option>
+                <option value="exam">모의고사형</option>
+              </select>
+            </label>
+            <label class="toggle-label">
+              <input id="showGrammar" type="checkbox" checked />
+              내신 포인트
+            </label>
+          </div>
+
+          <div class="service-note">
+            <strong>학생용 화면</strong>
+            <span>학생은 API 키 없이 사진과 지문만 사용합니다. 자연스러운 해석은 서버가 안전하게 AI에 요청합니다.</span>
+          </div>
+
+          <button class="primary-button" id="analyzeButton" type="button">청킹하기</button>
+        </aside>
+
+        <section class="result-pane">
+          <div class="pane-heading">
+            <h2>청킹 결과</h2>
+            <div class="view-tabs" role="tablist" aria-label="결과 보기">
+              <button class="tab active" data-view="study" type="button">학습</button>
+              <button class="tab" data-view="clean" type="button">원문</button>
+            </div>
+          </div>
+
+          <div class="stats-row">
+            <div>
+              <span class="stat-value" id="sentenceCount">0</span>
+              <span class="stat-label">문장</span>
+            </div>
+            <div>
+              <span class="stat-value" id="chunkCount">0</span>
+              <span class="stat-label">청크</span>
+            </div>
+            <div>
+              <span class="stat-value" id="wordCount">0</span>
+              <span class="stat-label">단어</span>
+            </div>
+          </div>
+
+          <section id="passageInsight" class="passage-insight" hidden>
+            <div>
+              <span class="insight-label">주제</span>
+              <p id="topicKo"></p>
+              <p id="topicEn"></p>
+            </div>
+            <div>
+              <span class="insight-label">키워드</span>
+              <div id="keywordList" class="keyword-list"></div>
+            </div>
+          </section>
+
+          <div id="resultArea" class="result-area empty">
+            <p>지문을 넣으면 문장별 끊어읽기와 해석 칸이 만들어집니다.</p>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="sentenceTemplate">
+      <article class="sentence-block">
+        <div class="sentence-head">
+          <span class="sentence-index"></span>
+          <button class="ghost-button reveal-button" type="button">해석 보기</button>
+        </div>
+        <div class="chunk-list"></div>
+        <div class="exam-points" hidden></div>
+        <p class="translation" hidden></p>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
