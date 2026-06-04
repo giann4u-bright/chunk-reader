@@ -83,6 +83,8 @@ async function handleAnalyze(req, res) {
     "입력된 영어 지문을 문장별로 나누고, 각 문장을 의미 단위로 끊어라.",
     "청킹 강도가 fine이면 기초 학습자도 부담 없이 따라갈 수 있게 아주 잘게 끊어라.",
     "fine에서는 반드시 주어, 동사, 목적어/보어, 전치사구, 관계사, 접속사구를 가능한 한 분리하라.",
+    "동사구는 반드시 한 덩어리로 묶어라: be + p.p., be + -ing, 조동사 + 동사원형, have/has/had + p.p.",
+    "동사구 사이에 부사가 들어가도 함께 묶어라. 예: is carefully chosen, is quickly becoming, can easily understand, has already been chosen.",
     "fine 예시: 'Students / who / divide / a difficult task / into small steps / can understand / it / better'.",
     "fine에서는 한 청크가 보통 1~4단어가 되게 하고, 긴 명사구도 필요하면 나눠라.",
     "balanced와 exam은 기존처럼 의미 단위 중심으로 끊어라.",

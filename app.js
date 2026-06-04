@@ -255,9 +255,8 @@ function splitClauseIntoBasics(clause) {
   const chunks = [];
   if (verbIndex > 0) chunks.push(words.slice(0, verbIndex).join(" "));
 
-  let verbEnd = verbIndex + 1;
-  if (isModal(words[verbIndex]) && words[verbIndex + 1]) verbEnd += 1;
-  if (isBeVerbLike(words[verbIndex]) && words[verbIndex + 1] && !isPreposition(words[verbIndex + 1])) {
+  let verbEnd = collectVerbPhraseEnd(words, verbIndex);
+  if (verbEnd === verbIndex + 1 && isBeVerbLike(words[verbIndex]) && words[verbIndex + 1] && !isPreposition(words[verbIndex + 1])) {
     verbEnd += collectComplementEnd(words.slice(verbEnd));
   }
   chunks.push(words.slice(verbIndex, verbEnd).join(" "));
@@ -317,6 +316,120 @@ function isLikelyVerb(word) {
       "becomes",
     ].includes(clean) ||
     /\w+(ed|ing)$/.test(clean)
+  );
+}
+
+function collectVerbPhraseEnd(words, verbIndex) {
+  const head = cleanWord(words[verbIndex]);
+  let index = verbIndex + 1;
+  let adverbEnd = skipAdverbs(words, index);
+  let next = cleanWord(words[adverbEnd]);
+
+  if (isModal(head) && next && isLikelyBaseVerb(next)) {
+    index = adverbEnd + 1;
+    if (isHaveAux(next) || isBeVerbLike(next)) return collectVerbPhraseEnd(words, adverbEnd);
+    return index;
+  }
+
+  if (isBeVerbLike(head) && next) {
+    if (next === "being") {
+      const afterBeing = skipAdverbs(words, adverbEnd + 1);
+      if (isParticiple(words[afterBeing])) return afterBeing + 1;
+    }
+    if (isParticiple(next) || isGerund(next)) return adverbEnd + 1;
+  }
+
+  if (isHaveAux(head) && next) {
+    if (next === "been") {
+      const afterBeen = skipAdverbs(words, adverbEnd + 1);
+      if (isParticiple(words[afterBeen]) || isGerund(words[afterBeen])) return afterBeen + 1;
+      return adverbEnd + 1;
+    }
+    if (isParticiple(next)) return adverbEnd + 1;
+  }
+  return index;
+}
+
+function skipAdverbs(words, startIndex) {
+  let index = startIndex;
+  while (words[index] && isAdverbWord(cleanWord(words[index]))) index += 1;
+  return index;
+}
+
+function cleanWord(word) {
+  return String(word || "").toLowerCase().replace(/[^a-z']/g, "");
+}
+
+function isHaveAux(word) {
+  return /^(have|has|had|'ve|ve)$/.test(cleanWord(word));
+}
+
+function isParticiple(word) {
+  const clean = cleanWord(word);
+  return (
+    /\w+ed$/.test(clean) ||
+    [
+      "been",
+      "brought",
+      "built",
+      "chosen",
+      "done",
+      "driven",
+      "eaten",
+      "found",
+      "given",
+      "gone",
+      "known",
+      "made",
+      "seen",
+      "shown",
+      "taken",
+      "taught",
+      "told",
+      "written",
+    ].includes(clean)
+  );
+}
+
+function isGerund(word) {
+  return /\w+ing$/.test(cleanWord(word));
+}
+
+function isLikelyBaseVerb(word) {
+  const clean = cleanWord(word);
+  return (
+    [
+      "be",
+      "have",
+      "do",
+      "make",
+      "take",
+      "get",
+      "go",
+      "see",
+      "know",
+      "think",
+      "imagine",
+      "show",
+      "divide",
+      "understand",
+      "remember",
+      "bring",
+      "use",
+      "need",
+      "become",
+      "help",
+      "work",
+      "learn",
+      "study",
+      "read",
+      "write",
+      "find",
+      "give",
+      "keep",
+      "start",
+      "finish",
+    ].includes(clean) || isParticiple(clean) || isGerund(clean)
   );
 }
 
@@ -811,8 +924,7 @@ function parseSyntaxUnits(text, translation = "") {
   });
   if (subjectWords.length) units.push({ text: subjectWords.join(" "), translation: "", role: "subject" });
 
-  let verbEnd = verbIndex + 1;
-  if (isModal(cleanWords[verbIndex]) && words[verbIndex + 1]) verbEnd += 1;
+  let verbEnd = collectVerbPhraseEnd(words, verbIndex);
   units.push({ text: words.slice(verbIndex, verbEnd).join(" "), translation: "", role: "verb" });
 
   const rest = words.slice(verbEnd).join(" ");
@@ -861,11 +973,12 @@ function parseInitialContractionUnits(words, translation = "") {
   if (!expanded) return [];
 
   const units = [{ text: expanded[0], translation: "", role: "subject" }];
-  const nextWord = words[1] || "";
-  const verbText = expanded[1] === "have" && nextWord ? `${expanded[1]} ${nextWord}` : expanded[1];
+  const auxVerbWords = [expanded[1], ...words.slice(1)];
+  const auxVerbEnd = expanded[1] === "have" ? collectVerbPhraseEnd(auxVerbWords, 0) : 1;
+  const verbText = auxVerbWords.slice(0, auxVerbEnd).join(" ");
   units.push({ text: verbText, translation: "", role: "verb" });
 
-  const restStart = expanded[1] === "have" && nextWord ? 2 : 1;
+  const restStart = auxVerbEnd;
   const rest = words.slice(restStart).join(" ");
   if (rest) {
     splitByPrepositions(rest).forEach((piece, index) => {
@@ -893,9 +1006,9 @@ function highlightSyntaxWords(text, grammar = "") {
 
   if (firstVerbPosition >= 0) {
     const verbPart = wordParts[firstVerbPosition];
-    verbWordIndexes.add(verbPart.index);
-    const nextWord = wordParts[firstVerbPosition + 1];
-    if (isModal(verbPart.word) && nextWord) verbWordIndexes.add(nextWord.index);
+    const verbWords = wordParts.map(({ word }) => word);
+    const verbEnd = collectVerbPhraseEnd(verbWords, firstVerbPosition);
+    wordParts.slice(firstVerbPosition, verbEnd).forEach(({ index }) => verbWordIndexes.add(index));
 
     wordParts.slice(0, firstVerbPosition).forEach(({ word, index }) => {
       if (!isConnectorWord(word) && !isAdverbWord(word)) subjectWordIndexes.add(index);
@@ -925,7 +1038,7 @@ function isRelativeWord(word) {
 }
 
 function isAdverbWord(word) {
-  return /^(often|also|only|just|very|more|most|better|longer)$/i.test(word);
+  return /^(often|also|only|just|very|more|most|better|longer|already|ever|never|still|carefully|quickly|slowly|usually|really|simply|clearly)$/i.test(word) || /ly$/i.test(word);
 }
 
 function renderExamPoints(container, points = {}) {
