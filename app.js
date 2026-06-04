@@ -122,6 +122,12 @@ const samplePassageInsight = {
     ko: "성공에는 타고난 재능보다 꾸준한 연습과 피드백이 더 중요하다.",
     en: "Steady practice and clear feedback matter more for success than talent alone.",
   },
+  logic: [
+    { type: "통념", text: "성공은 특별한 재능에서 나온다고 흔히 생각한다." },
+    { type: "반박", text: "하지만 연구는 재능보다 꾸준한 연습과 피드백이 더 중요함을 보여 준다." },
+    { type: "주제", text: "성공의 핵심은 타고난 능력보다 지속적인 학습 과정이다." },
+    { type: "적용", text: "어려운 과제를 작은 단계로 나누면 더 잘 이해하고 오래 기억할 수 있다." },
+  ],
   keywords: [
     { en: "success", ko: "성공" },
     { en: "talent", ko: "재능" },
@@ -161,6 +167,7 @@ const els = {
   topicKo: document.querySelector("#topicKo"),
   topicEn: document.querySelector("#topicEn"),
   keywordList: document.querySelector("#keywordList"),
+  logicFlow: document.querySelector("#logicFlow"),
   sentenceTemplate: document.querySelector("#sentenceTemplate"),
   sentenceCount: document.querySelector("#sentenceCount"),
   chunkCount: document.querySelector("#chunkCount"),
@@ -381,6 +388,7 @@ function buildFallbackAnalysis(sentences, level) {
       text: chunk,
       translation: "",
       grammar: getChunkNote(chunk, level),
+      role: inferChunkRole(chunk, getChunkNote(chunk, level)),
     }));
     return {
       sentence,
@@ -427,8 +435,12 @@ function sanitizeAiBlocks(aiBlocks, fallbackBlocks) {
           text: normalizeText(String(chunk.text || fallback.chunks[chunkIndex]?.text || "")),
           translation: String(chunk.translation || "").trim(),
           grammar: String(chunk.grammar || fallback.chunks[chunkIndex]?.grammar || "").trim(),
+          role: normalizeRole(chunk.role || fallback.chunks[chunkIndex]?.role || "", chunk.text || fallback.chunks[chunkIndex]?.text, chunk.grammar || fallback.chunks[chunkIndex]?.grammar),
         }))
-      : fallback.chunks;
+      : fallback.chunks.map((chunk) => ({
+          ...chunk,
+          role: normalizeRole(chunk.role, chunk.text, chunk.grammar),
+        }));
 
     return {
       sentence: normalizeText(String(ai.original || fallback.sentence)),
@@ -444,6 +456,13 @@ function normalizePassageInsight(passage = {}) {
   const topicKo = String(passage.topicKo || passage.topic?.ko || "").trim();
   const topicEn = String(passage.topicEn || passage.topic?.en || "").trim();
   const rawKeywords = Array.isArray(passage.keywords) ? passage.keywords : [];
+  const rawLogic = Array.isArray(passage.logic)
+    ? passage.logic
+    : Array.isArray(passage.logicalStructure)
+      ? passage.logicalStructure
+      : Array.isArray(passage.flow)
+        ? passage.flow
+        : [];
   const keywords = rawKeywords
     .map((keyword) => {
       if (typeof keyword === "string") return { en: keyword.trim(), ko: "" };
@@ -454,11 +473,26 @@ function normalizePassageInsight(passage = {}) {
     })
     .filter((keyword) => keyword.en || keyword.ko)
     .slice(0, 8);
+  const logic = rawLogic
+    .map((step) => {
+      if (typeof step === "string") return { type: "흐름", text: step.trim() };
+      return {
+        type: String(step.type || step.label || step.stage || "").trim(),
+        text: String(step.text || step.description || step.summary || "").trim(),
+      };
+    })
+    .filter((step) => step.type || step.text)
+    .map((step) => ({
+      type: step.type || "흐름",
+      text: step.text,
+    }))
+    .slice(0, 7);
 
-  if (!topicKo && !topicEn && !keywords.length) return null;
+  if (!topicKo && !topicEn && !keywords.length && !logic.length) return null;
   return {
     topic: { ko: topicKo, en: topicEn },
     keywords,
+    logic,
   };
 }
 
@@ -470,6 +504,41 @@ function normalizePoints(points = {}) {
   };
 }
 
+function normalizeRole(role, text = "", grammar = "") {
+  const normalized = String(role || "").trim().toLowerCase();
+  if (["subject", "verb", "object", "complement", "prep", "relative", "linker", "adverb"].includes(normalized)) {
+    return normalized;
+  }
+  return inferChunkRole(String(text || ""), String(grammar || ""));
+}
+
+function inferChunkRole(text, grammar = "") {
+  const clue = `${grammar} ${text}`.toLowerCase();
+  const koreanClue = `${grammar} ${text}`;
+  if (/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i.test(text)) return "prep";
+  if (/^(and|but|or|so|however|therefore)\b/i.test(text) || /흐름|역접|인과|예시/.test(koreanClue)) return "linker";
+  if (/^(who|which|that|whose|whom)\b/i.test(text) || /관계사/.test(koreanClue)) return "relative";
+  if (/보어|complement/.test(clue)) return "complement";
+  if (/목적어|object|대명사/.test(koreanClue) && !/주어/.test(koreanClue)) return "object";
+  if (/주어|subject|^s\s/.test(koreanClue) || /\bS\s/i.test(grammar)) return "subject";
+  if (/동사|verb|^v\s|be동사|조동사/.test(koreanClue) || text.split(/\s+/).some((word) => isLikelyVerb(word))) return "verb";
+  if (/부사|adverb/.test(clue)) return "adverb";
+  return "";
+}
+
+function roleLabel(role) {
+  return {
+    subject: "주어",
+    verb: "동사",
+    object: "목적어",
+    complement: "보어",
+    prep: "전치사구",
+    relative: "관계사",
+    linker: "연결어",
+    adverb: "부사",
+  }[role] || "수식";
+}
+
 function renderPassageInsight(insight) {
   if (!insight || activeView === "clean") {
     els.passageInsight.hidden = true;
@@ -477,6 +546,7 @@ function renderPassageInsight(insight) {
       els.topicKo.textContent = "";
       els.topicEn.textContent = "";
       els.keywordList.innerHTML = "";
+      els.logicFlow.innerHTML = "";
     }
     return;
   }
@@ -491,6 +561,17 @@ function renderPassageInsight(insight) {
           <strong>${escapeHtml(keyword.en)}</strong>
           ${keyword.ko ? `<em>${escapeHtml(keyword.ko)}</em>` : ""}
         </span>
+      `,
+    )
+    .join("");
+  els.logicFlow.innerHTML = (insight.logic || [])
+    .map(
+      (step, index) => `
+        <div class="logic-step">
+          <span>${index + 1}</span>
+          <strong>${escapeHtml(step.type)}</strong>
+          <p>${escapeHtml(step.text)}</p>
+        </div>
       `,
     )
     .join("");
@@ -526,13 +607,26 @@ function renderResults(blocks) {
     });
 
     const list = node.querySelector(".chunk-list");
-    block.chunks.forEach((chunk, chunkIndex) => {
+    const normalizedChunks = block.chunks.map((chunk) => {
+      const text = typeof chunk === "string" ? chunk : chunk.text;
+      const grammar = typeof chunk === "string" ? getChunkNote(chunk) : chunk.grammar;
+      return {
+        text,
+        translation: typeof chunk === "string" ? "" : chunk.translation,
+        grammar,
+        role: normalizeRole(typeof chunk === "string" ? "" : chunk.role, text, grammar),
+      };
+    });
+
+    renderSyntaxTree(node.querySelector(".syntax-tree"), normalizedChunks);
+
+    normalizedChunks.forEach((chunk, chunkIndex) => {
       const chunkText = typeof chunk === "string" ? chunk : chunk.text;
       const chunkNote = els.showGrammar.checked ? (typeof chunk === "string" ? getChunkNote(chunk) : chunk.grammar) : "";
       const chunkTranslation = typeof chunk === "string" ? "" : chunk.translation;
       chunkTotal += 1;
       const item = document.createElement("div");
-      item.className = "chunk-item";
+      item.className = `chunk-item ${chunk.role ? `role-${chunk.role}` : ""}`.trim();
       item.innerHTML = `
         <span class="chunk-number">${chunkIndex + 1}</span>
         <div class="chunk-body">
@@ -549,6 +643,33 @@ function renderResults(blocks) {
 
   els.resultArea.append(fragment);
   setStats(blocks.length, chunkTotal, wordTotal);
+}
+
+function renderSyntaxTree(container, chunks) {
+  const visibleChunks = chunks.filter((chunk) => chunk.text && chunk.role);
+  if (!els.showGrammar.checked || !visibleChunks.length) {
+    container.hidden = true;
+    container.innerHTML = "";
+    return;
+  }
+
+  container.hidden = false;
+  container.innerHTML = `
+    <div class="tree-title">구조 트리</div>
+    <div class="tree-root">
+      ${visibleChunks
+        .map(
+          (chunk) => `
+            <div class="tree-node role-${escapeHtml(chunk.role)}">
+              <span>${escapeHtml(roleLabel(chunk.role))}</span>
+              <strong>${escapeHtml(chunk.text)}</strong>
+              ${chunk.translation ? `<em>${escapeHtml(chunk.translation)}</em>` : ""}
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function renderExamPoints(container, points = {}) {

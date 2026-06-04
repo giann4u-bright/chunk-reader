@@ -1,20 +1,30 @@
 :root {
   color-scheme: light;
-  --ink: #1d2433;
-  --muted: #647084;
-  --line: #d9dee8;
+  --ink: #132238;
+  --muted: #607086;
+  --line: #cdd8e8;
   --panel: #ffffff;
-  --soft: #f3f6fb;
-  --accent: #1f7a6b;
-  --accent-strong: #155e53;
-  --accent-soft: #e3f3ef;
-  --mark: #f7c948;
+  --soft: #eef4fb;
+  --accent: #193b68;
+  --accent-strong: #0b2545;
+  --accent-soft: #e8f0fb;
+  --subject: #c92a3a;
+  --subject-soft: #fdecef;
+  --verb: #1d5fd1;
+  --verb-soft: #eaf1ff;
+  --object: #5b6473;
+  --prep: #5d3fd3;
+  --mark: #f4b740;
   --danger: #b42318;
-  --shadow: 0 18px 42px rgba(31, 42, 68, 0.12);
+  --shadow: 0 18px 42px rgba(11, 37, 69, 0.15);
 }
 
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -22,8 +32,8 @@ body {
   min-height: 100vh;
   color: var(--ink);
   background:
-    linear-gradient(180deg, rgba(227, 243, 239, 0.72), rgba(243, 246, 251, 0.95) 34%),
-    #f3f6fb;
+    linear-gradient(180deg, rgba(11, 37, 69, 0.12), rgba(238, 244, 251, 0.98) 38%),
+    #eef4fb;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -55,7 +65,7 @@ button {
 
 .eyebrow {
   margin: 0 0 4px;
-  color: var(--accent-strong);
+  color: #2d5f9f;
   font-size: 0.85rem;
   font-weight: 800;
 }
@@ -90,9 +100,9 @@ h2 {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 8px 20px rgba(31, 42, 68, 0.08);
+  color: #fff;
+  background: var(--accent-strong);
+  box-shadow: 0 8px 20px rgba(11, 37, 69, 0.14);
 }
 
 .workspace {
@@ -107,7 +117,7 @@ h2 {
   min-height: calc(100vh - 118px);
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--shadow);
 }
 
@@ -138,8 +148,9 @@ h2 {
   min-height: 28px;
   padding: 0 10px;
   border-radius: 999px;
-  color: var(--accent-strong);
+  color: #fff;
   background: var(--accent-soft);
+  background: var(--accent);
   font-size: 0.8rem;
   font-weight: 800;
 }
@@ -246,7 +257,7 @@ textarea {
 textarea:focus,
 input:focus,
 select:focus {
-  outline: 3px solid rgba(31, 122, 107, 0.2);
+  outline: 3px solid rgba(25, 59, 104, 0.2);
   border-color: var(--accent);
 }
 
@@ -328,7 +339,7 @@ select {
   color: #fff;
   background: var(--accent);
   font-weight: 950;
-  box-shadow: 0 12px 22px rgba(31, 122, 107, 0.22);
+  box-shadow: 0 12px 22px rgba(25, 59, 104, 0.24);
 }
 
 .primary-button:hover,
@@ -400,6 +411,10 @@ select {
   background: #ffffff;
 }
 
+.logic-panel {
+  grid-column: 1 / -1;
+}
+
 .passage-insight > div {
   min-width: 0;
 }
@@ -439,7 +454,7 @@ select {
   gap: 6px;
   max-width: 100%;
   padding: 7px 9px;
-  border: 1px solid #c8e2dc;
+  border: 1px solid #cad8ee;
   border-radius: 999px;
   color: var(--accent-strong);
   background: var(--accent-soft);
@@ -456,6 +471,71 @@ select {
   color: #445062;
   font-style: normal;
   font-weight: 800;
+}
+
+.logic-flow {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.logic-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(150px, 1fr);
+  gap: 8px;
+  flex: 0 0 min(260px, 78vw);
+  min-height: 82px;
+  padding: 10px;
+  border: 1px solid #cad8ee;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.logic-step::after {
+  content: "→";
+  position: absolute;
+  top: 50%;
+  right: -13px;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  transform: translateY(-50%);
+  color: var(--accent);
+  background: #f8fbff;
+  font-weight: 950;
+  text-align: center;
+}
+
+.logic-step:last-child::after {
+  content: "";
+}
+
+.logic-step > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.logic-step strong {
+  color: var(--accent-strong);
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.logic-step p {
+  grid-column: 2;
+  margin: -4px 0 0;
+  color: #3d4c61;
+  font-size: 0.84rem;
+  line-height: 1.4;
 }
 
 .result-area {
@@ -542,14 +622,14 @@ select {
 
 .chunk-note {
   margin: 4px 0 0;
-  color: #7a4d00;
+  color: #516172;
   font-size: 0.82rem;
   font-weight: 750;
 }
 
 .chunk-translation {
   margin: 6px 0 0;
-  color: #17463f;
+  color: #163b66;
   font-size: 0.95rem;
   font-weight: 850;
   line-height: 1.45;
@@ -560,7 +640,7 @@ select {
   padding: 12px 14px 14px;
   border-top: 1px solid var(--line);
   color: #30384a;
-  background: #fffaf0;
+  background: #f7faff;
   line-height: 1.55;
 }
 
@@ -586,6 +666,120 @@ select {
   color: var(--accent-strong);
 }
 
+.role-subject .chunk-body {
+  border-left-color: var(--subject);
+  background: var(--subject-soft);
+}
+
+.role-subject .chunk-text,
+.role-subject .chunk-note {
+  color: var(--subject);
+}
+
+.role-verb .chunk-body {
+  border-left-color: var(--verb);
+  background: var(--verb-soft);
+}
+
+.role-verb .chunk-text,
+.role-verb .chunk-note {
+  color: var(--verb);
+}
+
+.role-object .chunk-body,
+.role-complement .chunk-body {
+  border-left-color: var(--object);
+}
+
+.role-prep .chunk-body {
+  border-left-color: var(--prep);
+}
+
+.role-relative .chunk-body,
+.role-linker .chunk-body {
+  border-left-color: var(--mark);
+}
+
+.syntax-tree {
+  padding: 0 14px 14px;
+}
+
+.tree-title {
+  margin: 0 0 8px;
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+  font-weight: 950;
+}
+
+.tree-root {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.tree-node {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: 96px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid #d7e1ef;
+  border-top: 4px solid var(--accent);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tree-node span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.tree-node strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.tree-node em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.tree-node.role-subject {
+  border-top-color: var(--subject);
+}
+
+.tree-node.role-subject span,
+.tree-node.role-subject strong {
+  color: var(--subject);
+}
+
+.tree-node.role-verb {
+  border-top-color: var(--verb);
+}
+
+.tree-node.role-verb span,
+.tree-node.role-verb strong {
+  color: var(--verb);
+}
+
+.tree-node.role-prep {
+  border-top-color: var(--prep);
+}
+
+.tree-node.role-relative,
+.tree-node.role-linker {
+  border-top-color: var(--mark);
+}
+
 .fallback-translation {
   color: var(--muted);
   background: #f8fafc;
@@ -599,6 +793,7 @@ select {
 .clean-view .chunk-note,
 .clean-view .chunk-translation,
 .clean-view .exam-points,
+.clean-view .syntax-tree,
 .clean-view .sentence-head,
 .clean-view .translation {
   display: none;

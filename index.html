@@ -48,7 +48,7 @@
               청킹 강도
               <select id="chunkLevel">
                 <option value="balanced" selected>표준</option>
-                <option value="fine">초6식 잘게</option>
+                <option value="fine">촘촘하게</option>
                 <option value="exam">모의고사형</option>
               </select>
             </label>
@@ -100,6 +100,10 @@
               <span class="insight-label">키워드</span>
               <div id="keywordList" class="keyword-list"></div>
             </div>
+            <div class="logic-panel">
+              <span class="insight-label">논리 구조</span>
+              <div id="logicFlow" class="logic-flow"></div>
+            </div>
           </section>
 
           <div id="resultArea" class="result-area empty">
@@ -116,6 +120,7 @@
           <button class="ghost-button reveal-button" type="button">해석 보기</button>
         </div>
         <div class="chunk-list"></div>
+        <div class="syntax-tree" hidden></div>
         <div class="exam-points" hidden></div>
         <p class="translation" hidden></p>
       </article>
