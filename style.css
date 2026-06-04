@@ -620,6 +620,16 @@ select {
   overflow-wrap: anywhere;
 }
 
+.syntax-subject {
+  color: var(--subject);
+  font-weight: 950;
+}
+
+.syntax-verb {
+  color: var(--verb);
+  font-weight: 950;
+}
+
 .chunk-note {
   margin: 4px 0 0;
   color: #516172;

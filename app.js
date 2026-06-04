@@ -621,16 +621,16 @@ function renderResults(blocks) {
     renderSyntaxTree(node.querySelector(".syntax-tree"), normalizedChunks);
 
     normalizedChunks.forEach((chunk, chunkIndex) => {
-      const chunkText = typeof chunk === "string" ? chunk : chunk.text;
-      const chunkNote = els.showGrammar.checked ? (typeof chunk === "string" ? getChunkNote(chunk) : chunk.grammar) : "";
-      const chunkTranslation = typeof chunk === "string" ? "" : chunk.translation;
+      const chunkText = chunk.text;
+      const chunkNote = els.showGrammar.checked ? chunk.grammar : "";
+      const chunkTranslation = chunk.translation;
       chunkTotal += 1;
       const item = document.createElement("div");
-      item.className = `chunk-item ${chunk.role ? `role-${chunk.role}` : ""}`.trim();
+      item.className = "chunk-item";
       item.innerHTML = `
         <span class="chunk-number">${chunkIndex + 1}</span>
         <div class="chunk-body">
-          <p class="chunk-text">${escapeHtml(chunkText)}</p>
+          <p class="chunk-text">${highlightSyntaxWords(chunkText, chunkNote)}</p>
           ${chunkTranslation ? `<p class="chunk-translation">${escapeHtml(chunkTranslation)}</p>` : ""}
           ${chunkNote ? `<p class="chunk-note">${escapeHtml(chunkNote)}</p>` : ""}
         </div>
@@ -646,7 +646,7 @@ function renderResults(blocks) {
 }
 
 function renderSyntaxTree(container, chunks) {
-  const visibleChunks = chunks.filter((chunk) => chunk.text && chunk.role);
+  const visibleChunks = chunks.flatMap((chunk) => getSyntaxUnits(chunk.text, chunk.grammar, chunk.translation));
   if (!els.showGrammar.checked || !visibleChunks.length) {
     container.hidden = true;
     container.innerHTML = "";
@@ -670,6 +670,100 @@ function renderSyntaxTree(container, chunks) {
         .join("")}
     </div>
   `;
+}
+
+function getSyntaxUnits(text, grammar = "", translation = "") {
+  const units = parseSyntaxUnits(text, translation);
+
+  if (units.length) return units;
+  const role = normalizeRole("", text, grammar);
+  return role ? [{ text, translation, role }] : [];
+}
+
+function parseSyntaxUnits(text, translation = "") {
+  const words = String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const cleanWords = words.map((word) => word.replace(/[^A-Za-z']/g, ""));
+  const verbIndex = cleanWords.findIndex((word) => isLikelyVerb(word) || isModal(word));
+  if (verbIndex === -1) {
+    if (words.length > 1 && isConnectorWord(cleanWords[0])) {
+      return [{ text: words.slice(1).join(" "), translation, role: "subject" }];
+    }
+    return [];
+  }
+
+  const units = [];
+  const subjectWords = words.slice(0, verbIndex).filter((word) => {
+    const clean = word.replace(/[^A-Za-z']/g, "");
+    return !isConnectorWord(clean) && !isAdverbWord(clean);
+  });
+  if (subjectWords.length) units.push({ text: subjectWords.join(" "), translation: "", role: "subject" });
+
+  let verbEnd = verbIndex + 1;
+  if (isModal(cleanWords[verbIndex]) && words[verbIndex + 1]) verbEnd += 1;
+  units.push({ text: words.slice(verbIndex, verbEnd).join(" "), translation: "", role: "verb" });
+
+  const rest = words.slice(verbEnd).join(" ");
+  if (rest) {
+    splitByPrepositions(rest).forEach((piece, index) => {
+      units.push({
+        text: piece,
+        translation: index === 0 && !piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i) ? translation : "",
+        role: piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i) ? "prep" : "object",
+      });
+    });
+  }
+
+  return units.filter((unit) => unit.text);
+}
+
+function highlightSyntaxWords(text, grammar = "") {
+  const parts = String(text || "").match(/[A-Za-z']+|[^A-Za-z']+/g) || [];
+  const wordParts = parts
+    .map((part, index) => ({ part, index, word: part.match(/^[A-Za-z']+$/) ? part : "" }))
+    .filter((part) => part.word);
+  const firstVerbPosition = wordParts.findIndex(({ word }) => isLikelyVerb(word) || isModal(word));
+  const subjectWordIndexes = new Set();
+  const verbWordIndexes = new Set();
+  const grammarText = String(grammar || "");
+
+  if (firstVerbPosition >= 0) {
+    const verbPart = wordParts[firstVerbPosition];
+    verbWordIndexes.add(verbPart.index);
+    const nextWord = wordParts[firstVerbPosition + 1];
+    if (isModal(verbPart.word) && nextWord) verbWordIndexes.add(nextWord.index);
+
+    wordParts.slice(0, firstVerbPosition).forEach(({ word, index }) => {
+      if (!isConnectorWord(word) && !isAdverbWord(word)) subjectWordIndexes.add(index);
+    });
+  } else if (/주어|subject|that절 주어|부사절 \+ 주어/i.test(grammarText)) {
+    wordParts.forEach(({ word, index }) => {
+      if (!isConnectorWord(word) && !isRelativeWord(word)) subjectWordIndexes.add(index);
+    });
+  }
+
+  return parts
+    .map((part, index) => {
+      const escaped = escapeHtml(part);
+      if (subjectWordIndexes.has(index)) return `<span class="syntax-subject">${escaped}</span>`;
+      if (verbWordIndexes.has(index)) return `<span class="syntax-verb">${escaped}</span>`;
+      return escaped;
+    })
+    .join("");
+}
+
+function isConnectorWord(word) {
+  return /^(when|while|if|although|though|because|since|as|and|but|or|so|however|therefore|that)$/i.test(word);
+}
+
+function isRelativeWord(word) {
+  return /^(who|which|that|whose|whom)$/i.test(word);
+}
+
+function isAdverbWord(word) {
+  return /^(often|also|only|just|very|more|most|better|longer)$/i.test(word);
 }
 
 function renderExamPoints(container, points = {}) {
