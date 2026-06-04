@@ -219,43 +219,78 @@ function chunkSentence(sentence, level) {
 
 function chunkSentenceForBeginners(sentence) {
   const protectedSentence = sentence.replace(/\b(Mr|Ms|Dr|U\.S|U\.K)\./g, (match) => match.replace(".", "<dot>"));
-  return protectedSentence
-    .split(/,\s*|\s+(?=(?:and|but|or|so|because|when|while|if|although|after|before|who|which|that)\b)/gi)
+  return splitIntoMeaningfulClauses(protectedSentence)
     .flatMap((clause) => splitClauseIntoBasics(clause.replace(/<dot>/g, ".")))
     .map((chunk) => chunk.trim())
     .filter(Boolean);
 }
 
+function splitIntoMeaningfulClauses(sentence) {
+  return sentence
+    .replace(/\b(Suppose),\s*(for example),/gi, "$1<comma> $2|")
+    .replace(/,\s*(for example|for instance),\s*/gi, ", $1, ")
+    .replace(/,\s*/g, "|")
+    .replace(/<comma>/g, ",")
+    .replace(/\s+(?=(?:and|but|or|so|because|when|while|if|although|after|before)\b)/gi, "|")
+    .replace(/\s+(?=that\s+(?:everyone|everybody|someone|somebody|people|students|they|he|she|it|we|you)\b)/gi, "|")
+    .replace(/\s+(?=(?:who|which)\b)/gi, "|")
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 function splitClauseIntoBasics(clause) {
+  if (isDiscourseChunk(clause)) return [clause];
+  const relativePatternChunks = splitRelativeSubjectClause(clause);
+  if (relativePatternChunks.length) return relativePatternChunks;
+
   const words = clause.trim().split(/\s+/).filter(Boolean);
   if (words.length <= 2) return [clause];
 
   const verbIndex = findVerbIndex(words);
   if (verbIndex === -1) return splitByPrepositions(words.join(" "));
+  if (isShortConnectorClause(words, verbIndex)) return [clause];
+  if (verbIndex === 0 && isBeVerbLike(words[verbIndex])) return [clause];
 
   const chunks = [];
   if (verbIndex > 0) chunks.push(words.slice(0, verbIndex).join(" "));
 
   let verbEnd = verbIndex + 1;
   if (isModal(words[verbIndex]) && words[verbIndex + 1]) verbEnd += 1;
-  if (isBeVerb(words[verbIndex]) && words[verbIndex + 1] && !isPreposition(words[verbIndex + 1])) verbEnd += 1;
+  if (isBeVerbLike(words[verbIndex]) && words[verbIndex + 1] && !isPreposition(words[verbIndex + 1])) {
+    verbEnd += collectComplementEnd(words.slice(verbEnd));
+  }
   chunks.push(words.slice(verbIndex, verbEnd).join(" "));
 
   const rest = words.slice(verbEnd).join(" ");
-  if (rest) chunks.push(...splitByPrepositions(rest));
-  return chunks.flatMap((chunk) => splitLongChunk(chunk, 4));
+  if (rest) chunks.push(...splitByPrepositions(rest, { keepShortObjectWithPrep: true }));
+  return mergeTinyChunks(chunks.flatMap((chunk) => splitLongChunk(chunk, 7)));
 }
 
 function findVerbIndex(words) {
-  return words.findIndex((word, index) => index > 0 && isLikelyVerb(word));
+  return words.findIndex((word, index) => (index > 0 || isImperativeVerb(word) || isBeVerbLike(word) || isModal(word)) && isLikelyVerb(word));
 }
 
 function isLikelyVerb(word) {
   const clean = word.toLowerCase().replace(/[^a-z']/g, "");
   return (
-    isBeVerb(clean) ||
+    isBeVerbLike(clean) ||
     isModal(clean) ||
     [
+      "suppose",
+      "supposes",
+      "know",
+      "knows",
+      "bring",
+      "brings",
+      "brought",
+      "you've",
+      "youve",
+      "they've",
+      "theyve",
+      "we've",
+      "weve",
+      "charge",
       "think",
       "thinks",
       "imagine",
@@ -289,6 +324,16 @@ function isBeVerb(word) {
   return /^(is|am|are|was|were|be|been|being)$/.test(String(word).toLowerCase().replace(/[^a-z']/g, ""));
 }
 
+function isBeVerbLike(word) {
+  return /^(is|am|are|was|were|be|been|being|you're|youre|i'm|im|he's|hes|she's|shes|it's|its|we're|were|they're|theyre)$/.test(
+    String(word).toLowerCase().replace(/[^a-z']/g, ""),
+  );
+}
+
+function isImperativeVerb(word) {
+  return /^(suppose|imagine|consider|remember|notice|think)$/i.test(String(word).replace(/[^a-z']/g, ""));
+}
+
 function isModal(word) {
   return /^(can|could|will|would|should|may|might|must)$/.test(String(word).toLowerCase().replace(/[^a-z']/g, ""));
 }
@@ -299,9 +344,62 @@ function isPreposition(word) {
   );
 }
 
-function splitByPrepositions(text) {
+function splitByPrepositions(text, options = {}) {
   const pieces = text.split(/\s+(?=(?:about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b)/gi);
-  return pieces.map((piece) => piece.trim()).filter(Boolean);
+  const trimmed = pieces.map((piece) => piece.trim()).filter(Boolean);
+  if (!options.keepShortObjectWithPrep || trimmed.length < 2) return trimmed;
+
+  const merged = [];
+  trimmed.forEach((piece) => {
+    const previous = merged[merged.length - 1];
+    if (previous && !isPreposition(previous.split(/\s+/)[0]) && isPreposition(piece.split(/\s+/)[0]) && previous.split(/\s+/).length <= 3) {
+      merged[merged.length - 1] = `${previous} ${piece}`;
+    } else {
+      merged.push(piece);
+    }
+  });
+  return merged;
+}
+
+function isDiscourseChunk(clause) {
+  return /^(suppose|imagine|consider),?\s+(for example|for instance),?$/i.test(clause.trim());
+}
+
+function isShortConnectorClause(words, verbIndex) {
+  return /^(and|but|or|so)$/i.test(words[0]) && verbIndex > 0 && words.length <= 4;
+}
+
+function splitRelativeSubjectClause(clause) {
+  const trimmed = clause.trim();
+  const match = trimmed.match(/^(that\s+(?:everyone|everybody|someone|somebody|people|students|workers|members|they|he|she|we|you))\s+(.+?)\s+(is|are|was|were)\s+(.+)$/i);
+  if (!match) return [];
+  const [, subject, modifier, beVerb, complement] = match;
+  return [subject, modifier, `${beVerb} ${complement}`].filter(Boolean);
+}
+
+function collectComplementEnd(words) {
+  if (!words.length) return 0;
+  let count = 1;
+  while (words[count] && !/^(and|but|or|so|because|when|while|if|although|that|who|which)$/i.test(words[count])) {
+    count += 1;
+    if (count >= 5) break;
+  }
+  return count;
+}
+
+function mergeTinyChunks(chunks) {
+  const merged = [];
+  chunks.forEach((chunk) => {
+    const clean = chunk.trim();
+    if (!clean) return;
+    const previous = merged[merged.length - 1];
+    if (previous && clean.split(/\s+/).length === 1 && !isLikelyVerb(clean) && !/^(who|which|that|and|but|or|so)$/i.test(clean)) {
+      merged[merged.length - 1] = `${previous} ${clean}`;
+    } else {
+      merged.push(clean);
+    }
+  });
+  return merged;
 }
 
 function splitLongChunk(chunk, maxWords) {
@@ -317,6 +415,11 @@ function splitLongChunk(chunk, maxWords) {
 function getChunkNote(chunk, level = els.chunkLevel.value) {
   if (!els.showGrammar.checked) return "";
   if (level === "fine") {
+    if (isDiscourseChunk(chunk)) return "상황 제시";
+    if (/^(you're|youre|i'm|im|he's|hes|she's|shes|it's|its|we're|they're|theyre)\b/i.test(chunk)) return "상태 표현";
+    if (/^that\s/i.test(chunk)) return "명사절 주어";
+    if (/^and\s+\w+[.!?]?$/i.test(chunk)) return "병렬 보어";
+    if (/^and\s+\w+/i.test(chunk)) return "병렬 연결";
     if (/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i.test(chunk)) {
       return "전치사구";
     }
@@ -673,6 +776,7 @@ function renderSyntaxTree(container, chunks) {
 }
 
 function getSyntaxUnits(text, grammar = "", translation = "") {
+  if (isDiscourseChunk(text)) return [];
   const units = parseSyntaxUnits(text, translation);
 
   if (units.length) return units;
@@ -685,9 +789,15 @@ function parseSyntaxUnits(text, translation = "") {
     .trim()
     .split(/\s+/)
     .filter(Boolean);
+  const contractionUnits = parseInitialContractionUnits(words, translation);
+  if (contractionUnits.length) return contractionUnits;
+
   const cleanWords = words.map((word) => word.replace(/[^A-Za-z']/g, ""));
   const verbIndex = cleanWords.findIndex((word) => isLikelyVerb(word) || isModal(word));
   if (verbIndex === -1) {
+    if (words.length > 1 && /^(and|but|or)$/i.test(cleanWords[0])) {
+      return [{ text: words.slice(1).join(" "), translation, role: "complement" }];
+    }
     if (words.length > 1 && isConnectorWord(cleanWords[0])) {
       return [{ text: words.slice(1).join(" "), translation, role: "subject" }];
     }
@@ -711,7 +821,11 @@ function parseSyntaxUnits(text, translation = "") {
       units.push({
         text: piece,
         translation: index === 0 && !piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i) ? translation : "",
-        role: piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i) ? "prep" : "object",
+        role: piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i)
+          ? "prep"
+          : isBeVerbLike(cleanWords[verbIndex])
+            ? "complement"
+            : "object",
       });
     });
   }
@@ -719,7 +833,55 @@ function parseSyntaxUnits(text, translation = "") {
   return units.filter((unit) => unit.text);
 }
 
+function parseInitialContractionUnits(words, translation = "") {
+  if (!words.length) return [];
+  const first = words[0].toLowerCase().replace(/[^a-z']/g, "");
+  const contractionMap = {
+    "you're": ["you", "are"],
+    youre: ["you", "are"],
+    "i'm": ["I", "am"],
+    im: ["I", "am"],
+    "he's": ["he", "is"],
+    hes: ["he", "is"],
+    "she's": ["she", "is"],
+    shes: ["she", "is"],
+    "it's": ["it", "is"],
+    its: ["it", "is"],
+    "we're": ["we", "are"],
+    "they're": ["they", "are"],
+    theyre: ["they", "are"],
+    "you've": ["you", "have"],
+    youve: ["you", "have"],
+    "we've": ["we", "have"],
+    weve: ["we", "have"],
+    "they've": ["they", "have"],
+    theyve: ["they", "have"],
+  };
+  const expanded = contractionMap[first];
+  if (!expanded) return [];
+
+  const units = [{ text: expanded[0], translation: "", role: "subject" }];
+  const nextWord = words[1] || "";
+  const verbText = expanded[1] === "have" && nextWord ? `${expanded[1]} ${nextWord}` : expanded[1];
+  units.push({ text: verbText, translation: "", role: "verb" });
+
+  const restStart = expanded[1] === "have" && nextWord ? 2 : 1;
+  const rest = words.slice(restStart).join(" ");
+  if (rest) {
+    splitByPrepositions(rest).forEach((piece, index) => {
+      units.push({
+        text: piece,
+        translation: index === 0 ? translation : "",
+        role: piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i) ? "prep" : "complement",
+      });
+    });
+  }
+  return units;
+}
+
 function highlightSyntaxWords(text, grammar = "") {
+  if (isDiscourseChunk(text)) return escapeHtml(text);
+
   const parts = String(text || "").match(/[A-Za-z']+|[^A-Za-z']+/g) || [];
   const wordParts = parts
     .map((part, index) => ({ part, index, word: part.match(/^[A-Za-z']+$/) ? part : "" }))
