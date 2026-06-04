@@ -50,6 +50,73 @@ const sampleAnalysis = [
   },
 ];
 
+const sampleFineAnalysis = [
+  {
+    sentence: "When people think about success, they often imagine a person who has a special talent.",
+    translation: "사람들은 성공을 생각할 때, 특별한 재능을 가진 사람을 자주 떠올립니다.",
+    source: "demo",
+    points: {
+      structure: "When절 안의 주어는 people, 동사는 think입니다. 주절의 주어는 they, 동사는 imagine입니다.",
+      pronouns: "they = people, who = a person",
+      flow: "성공에 대한 흔한 생각을 먼저 제시합니다.",
+    },
+    chunks: [
+      { text: "When people", translation: "사람들이 ~할 때", grammar: "부사절 + 주어" },
+      { text: "think", translation: "생각한다", grammar: "동사" },
+      { text: "about success", translation: "성공에 대해", grammar: "전치사구" },
+      { text: "they", translation: "그들은", grammar: "주어" },
+      { text: "often imagine", translation: "자주 떠올린다", grammar: "동사구" },
+      { text: "a person", translation: "한 사람을", grammar: "목적어" },
+      { text: "who", translation: "그 사람은", grammar: "관계사" },
+      { text: "has", translation: "가지고 있다", grammar: "동사" },
+      { text: "a special talent.", translation: "특별한 재능을", grammar: "목적어" },
+    ],
+  },
+  {
+    sentence: "However, many studies show that steady practice and clear feedback are more important than talent alone.",
+    translation: "하지만 많은 연구는 꾸준한 연습과 명확한 피드백이 재능만 있는 것보다 더 중요하다는 점을 보여 줍니다.",
+    source: "demo",
+    points: {
+      structure: "주어는 many studies, 동사는 show입니다. that절 전체가 show의 목적어입니다.",
+      pronouns: "",
+      flow: "However로 앞 문장의 생각을 반박합니다.",
+    },
+    chunks: [
+      { text: "However", translation: "하지만", grammar: "역접" },
+      { text: "many studies", translation: "많은 연구가", grammar: "주어" },
+      { text: "show", translation: "보여 준다", grammar: "동사" },
+      { text: "that steady practice", translation: "꾸준한 연습이", grammar: "that절 주어 1" },
+      { text: "and clear feedback", translation: "그리고 명확한 피드백이", grammar: "that절 주어 2" },
+      { text: "are", translation: "~이다", grammar: "be동사" },
+      { text: "more important", translation: "더 중요하다", grammar: "보어" },
+      { text: "than talent alone.", translation: "재능만 있는 것보다", grammar: "비교 전치사구" },
+    ],
+  },
+  {
+    sentence: "Students who divide a difficult task into small steps can understand it better and remember it longer.",
+    translation: "어려운 과제를 작은 단계로 나누는 학생들은 그것을 더 잘 이해하고 더 오래 기억할 수 있습니다.",
+    source: "demo",
+    points: {
+      structure: "큰 주어는 Students, 큰 동사는 can understand / remember입니다. who절은 Students를 설명합니다.",
+      pronouns: "who = Students, it = a difficult task",
+      flow: "주장을 학생들의 공부 방법으로 구체화합니다.",
+    },
+    chunks: [
+      { text: "Students", translation: "학생들은", grammar: "주어" },
+      { text: "who", translation: "그 학생들은", grammar: "관계사" },
+      { text: "divide", translation: "나눈다", grammar: "동사" },
+      { text: "a difficult task", translation: "어려운 과제를", grammar: "목적어" },
+      { text: "into small steps", translation: "작은 단계들로", grammar: "전치사구" },
+      { text: "can understand", translation: "이해할 수 있고", grammar: "조동사 + 동사" },
+      { text: "it", translation: "그것을", grammar: "목적어/대명사" },
+      { text: "better", translation: "더 잘", grammar: "부사" },
+      { text: "and remember", translation: "그리고 기억할 수 있다", grammar: "병렬 동사" },
+      { text: "it", translation: "그것을", grammar: "목적어/대명사" },
+      { text: "longer.", translation: "더 오래", grammar: "부사" },
+    ],
+  },
+];
+
 const samplePassageInsight = {
   topic: {
     ko: "성공에는 타고난 재능보다 꾸준한 연습과 피드백이 더 중요하다.",
@@ -126,6 +193,8 @@ function splitSentences(text) {
 }
 
 function chunkSentence(sentence, level) {
+  if (level === "fine") return chunkSentenceForBeginners(sentence);
+
   const protectedSentence = sentence.replace(/\b(Mr|Ms|Dr|U\.S|U\.K)\./g, (match) => match.replace(".", "<dot>"));
   const clausePattern =
     level === "fine"
@@ -141,6 +210,93 @@ function chunkSentence(sentence, level) {
     .filter(Boolean);
 }
 
+function chunkSentenceForBeginners(sentence) {
+  const protectedSentence = sentence.replace(/\b(Mr|Ms|Dr|U\.S|U\.K)\./g, (match) => match.replace(".", "<dot>"));
+  return protectedSentence
+    .split(/,\s*|\s+(?=(?:and|but|or|so|because|when|while|if|although|after|before|who|which|that)\b)/gi)
+    .flatMap((clause) => splitClauseIntoBasics(clause.replace(/<dot>/g, ".")))
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+}
+
+function splitClauseIntoBasics(clause) {
+  const words = clause.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 2) return [clause];
+
+  const verbIndex = findVerbIndex(words);
+  if (verbIndex === -1) return splitByPrepositions(words.join(" "));
+
+  const chunks = [];
+  if (verbIndex > 0) chunks.push(words.slice(0, verbIndex).join(" "));
+
+  let verbEnd = verbIndex + 1;
+  if (isModal(words[verbIndex]) && words[verbIndex + 1]) verbEnd += 1;
+  if (isBeVerb(words[verbIndex]) && words[verbIndex + 1] && !isPreposition(words[verbIndex + 1])) verbEnd += 1;
+  chunks.push(words.slice(verbIndex, verbEnd).join(" "));
+
+  const rest = words.slice(verbEnd).join(" ");
+  if (rest) chunks.push(...splitByPrepositions(rest));
+  return chunks.flatMap((chunk) => splitLongChunk(chunk, 4));
+}
+
+function findVerbIndex(words) {
+  return words.findIndex((word, index) => index > 0 && isLikelyVerb(word));
+}
+
+function isLikelyVerb(word) {
+  const clean = word.toLowerCase().replace(/[^a-z']/g, "");
+  return (
+    isBeVerb(clean) ||
+    isModal(clean) ||
+    [
+      "think",
+      "thinks",
+      "imagine",
+      "imagines",
+      "show",
+      "shows",
+      "divide",
+      "divides",
+      "understand",
+      "understands",
+      "remember",
+      "remembers",
+      "have",
+      "has",
+      "make",
+      "makes",
+      "help",
+      "helps",
+      "use",
+      "uses",
+      "need",
+      "needs",
+      "become",
+      "becomes",
+    ].includes(clean) ||
+    /\w+(ed|ing)$/.test(clean)
+  );
+}
+
+function isBeVerb(word) {
+  return /^(is|am|are|was|were|be|been|being)$/.test(String(word).toLowerCase().replace(/[^a-z']/g, ""));
+}
+
+function isModal(word) {
+  return /^(can|could|will|would|should|may|might|must)$/.test(String(word).toLowerCase().replace(/[^a-z']/g, ""));
+}
+
+function isPreposition(word) {
+  return /^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)$/.test(
+    String(word).toLowerCase().replace(/[^a-z']/g, ""),
+  );
+}
+
+function splitByPrepositions(text) {
+  const pieces = text.split(/\s+(?=(?:about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b)/gi);
+  return pieces.map((piece) => piece.trim()).filter(Boolean);
+}
+
 function splitLongChunk(chunk, maxWords) {
   const words = chunk.trim().split(/\s+/).filter(Boolean);
   if (words.length <= maxWords) return [chunk];
@@ -151,8 +307,19 @@ function splitLongChunk(chunk, maxWords) {
   return chunks;
 }
 
-function getChunkNote(chunk) {
+function getChunkNote(chunk, level = els.chunkLevel.value) {
   if (!els.showGrammar.checked) return "";
+  if (level === "fine") {
+    if (/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i.test(chunk)) {
+      return "전치사구";
+    }
+    if (/^(and|but|or|so|however|therefore)\b/i.test(chunk)) return "흐름 연결어";
+    if (/^(who|which|that|whose|whom)\b/i.test(chunk)) return "관계사";
+    if (/^(it|they|them|this|that|these|those)\b/i.test(chunk)) return "대명사";
+    if (/^(can|could|will|would|should|may|might|must)\b/i.test(chunk)) return "조동사 + 동사";
+    if (chunk.split(/\s+/).some((word) => isLikelyVerb(word))) return "동사구";
+    return "주어/목적어";
+  }
   const match = phraseHints.find(([pattern]) => pattern.test(chunk));
   if (match) return match[1];
   if (/\b(who|which|that|whose|whom)\b/i.test(chunk)) return "관계사 확인";
@@ -206,14 +373,14 @@ async function analyzeText() {
 
 function buildFallbackAnalysis(sentences, level) {
   if (normalizeText(els.sourceText.value) === normalizeText(sampleText)) {
-    return sampleAnalysis;
+    return level === "fine" ? sampleFineAnalysis : sampleAnalysis;
   }
 
   return sentences.map((sentence) => {
     const chunks = chunkSentence(sentence, level).map((chunk) => ({
       text: chunk,
       translation: "",
-      grammar: getChunkNote(chunk),
+      grammar: getChunkNote(chunk, level),
     }));
     return {
       sentence,
@@ -480,6 +647,8 @@ els.showGrammar.addEventListener("change", () => {
   renderResults(currentAnalysis);
   renderPassageInsight(currentPassageInsight);
 });
+
+els.chunkLevel.addEventListener("change", analyzeText);
 
 els.tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
