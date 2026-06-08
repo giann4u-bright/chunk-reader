@@ -742,19 +742,6 @@ function inferChunkRole(text, grammar = "") {
   return "";
 }
 
-function roleLabel(role) {
-  return {
-    subject: "주어",
-    verb: "동사",
-    object: "목적어",
-    complement: "보어",
-    prep: "전치사구",
-    relative: "관계사",
-    linker: "연결어",
-    adverb: "부사",
-  }[role] || "수식";
-}
-
 function renderPassageInsight(insight) {
   if (!insight || activeView === "clean") {
     els.passageInsight.hidden = true;
@@ -834,8 +821,6 @@ function renderResults(blocks) {
       };
     });
 
-    renderSyntaxTree(node.querySelector(".syntax-tree"), normalizedChunks);
-
     normalizedChunks.forEach((chunk, chunkIndex) => {
       const chunkText = chunk.text;
       const chunkNote = els.showGrammar.checked ? chunk.grammar : "";
@@ -859,137 +844,6 @@ function renderResults(blocks) {
 
   els.resultArea.append(fragment);
   setStats(blocks.length, chunkTotal, wordTotal);
-}
-
-function renderSyntaxTree(container, chunks) {
-  const visibleChunks = chunks.flatMap((chunk) => getSyntaxUnits(chunk.text, chunk.grammar, chunk.translation));
-  if (!els.showGrammar.checked || !visibleChunks.length) {
-    container.hidden = true;
-    container.innerHTML = "";
-    return;
-  }
-
-  container.hidden = false;
-  container.innerHTML = `
-    <div class="tree-title">구조 트리</div>
-    <div class="tree-root">
-      ${visibleChunks
-        .map(
-          (chunk) => `
-            <div class="tree-node role-${escapeHtml(chunk.role)}">
-              <span>${escapeHtml(roleLabel(chunk.role))}</span>
-              <strong>${escapeHtml(chunk.text)}</strong>
-              ${chunk.translation ? `<em>${escapeHtml(chunk.translation)}</em>` : ""}
-            </div>
-          `,
-        )
-        .join("")}
-    </div>
-  `;
-}
-
-function getSyntaxUnits(text, grammar = "", translation = "") {
-  if (isDiscourseChunk(text)) return [];
-  const units = parseSyntaxUnits(text, translation);
-
-  if (units.length) return units;
-  const role = normalizeRole("", text, grammar);
-  return role ? [{ text, translation, role }] : [];
-}
-
-function parseSyntaxUnits(text, translation = "") {
-  const words = String(text || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  const contractionUnits = parseInitialContractionUnits(words, translation);
-  if (contractionUnits.length) return contractionUnits;
-
-  const cleanWords = words.map((word) => word.replace(/[^A-Za-z']/g, ""));
-  const verbIndex = cleanWords.findIndex((word) => isLikelyVerb(word) || isModal(word));
-  if (verbIndex === -1) {
-    if (words.length > 1 && /^(and|but|or)$/i.test(cleanWords[0])) {
-      return [{ text: words.slice(1).join(" "), translation, role: "complement" }];
-    }
-    if (words.length > 1 && isConnectorWord(cleanWords[0])) {
-      return [{ text: words.slice(1).join(" "), translation, role: "subject" }];
-    }
-    return [];
-  }
-
-  const units = [];
-  const subjectWords = words.slice(0, verbIndex).filter((word) => {
-    const clean = word.replace(/[^A-Za-z']/g, "");
-    return !isConnectorWord(clean) && !isAdverbWord(clean);
-  });
-  if (subjectWords.length) units.push({ text: subjectWords.join(" "), translation: "", role: "subject" });
-
-  let verbEnd = collectVerbPhraseEnd(words, verbIndex);
-  units.push({ text: words.slice(verbIndex, verbEnd).join(" "), translation: "", role: "verb" });
-
-  const rest = words.slice(verbEnd).join(" ");
-  if (rest) {
-    splitByPrepositions(rest).forEach((piece, index) => {
-      units.push({
-        text: piece,
-        translation: index === 0 && !piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i) ? translation : "",
-        role: piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i)
-          ? "prep"
-          : isBeVerbLike(cleanWords[verbIndex])
-            ? "complement"
-            : "object",
-      });
-    });
-  }
-
-  return units.filter((unit) => unit.text);
-}
-
-function parseInitialContractionUnits(words, translation = "") {
-  if (!words.length) return [];
-  const first = words[0].toLowerCase().replace(/[^a-z']/g, "");
-  const contractionMap = {
-    "you're": ["you", "are"],
-    youre: ["you", "are"],
-    "i'm": ["I", "am"],
-    im: ["I", "am"],
-    "he's": ["he", "is"],
-    hes: ["he", "is"],
-    "she's": ["she", "is"],
-    shes: ["she", "is"],
-    "it's": ["it", "is"],
-    its: ["it", "is"],
-    "we're": ["we", "are"],
-    "they're": ["they", "are"],
-    theyre: ["they", "are"],
-    "you've": ["you", "have"],
-    youve: ["you", "have"],
-    "we've": ["we", "have"],
-    weve: ["we", "have"],
-    "they've": ["they", "have"],
-    theyve: ["they", "have"],
-  };
-  const expanded = contractionMap[first];
-  if (!expanded) return [];
-
-  const units = [{ text: expanded[0], translation: "", role: "subject" }];
-  const auxVerbWords = [expanded[1], ...words.slice(1)];
-  const auxVerbEnd = expanded[1] === "have" ? collectVerbPhraseEnd(auxVerbWords, 0) : 1;
-  const verbText = auxVerbWords.slice(0, auxVerbEnd).join(" ");
-  units.push({ text: verbText, translation: "", role: "verb" });
-
-  const restStart = auxVerbEnd;
-  const rest = words.slice(restStart).join(" ");
-  if (rest) {
-    splitByPrepositions(rest).forEach((piece, index) => {
-      units.push({
-        text: piece,
-        translation: index === 0 ? translation : "",
-        role: piece.match(/^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i) ? "prep" : "complement",
-      });
-    });
-  }
-  return units;
 }
 
 function highlightSyntaxWords(text, grammar = "") {

@@ -676,120 +676,6 @@ select {
   color: var(--accent-strong);
 }
 
-.role-subject .chunk-body {
-  border-left-color: var(--subject);
-  background: var(--subject-soft);
-}
-
-.role-subject .chunk-text,
-.role-subject .chunk-note {
-  color: var(--subject);
-}
-
-.role-verb .chunk-body {
-  border-left-color: var(--verb);
-  background: var(--verb-soft);
-}
-
-.role-verb .chunk-text,
-.role-verb .chunk-note {
-  color: var(--verb);
-}
-
-.role-object .chunk-body,
-.role-complement .chunk-body {
-  border-left-color: var(--object);
-}
-
-.role-prep .chunk-body {
-  border-left-color: var(--prep);
-}
-
-.role-relative .chunk-body,
-.role-linker .chunk-body {
-  border-left-color: var(--mark);
-}
-
-.syntax-tree {
-  padding: 0 14px 14px;
-}
-
-.tree-title {
-  margin: 0 0 8px;
-  color: var(--accent-strong);
-  font-size: 0.84rem;
-  font-weight: 950;
-}
-
-.tree-root {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f8fbff;
-}
-
-.tree-node {
-  position: relative;
-  display: grid;
-  gap: 3px;
-  min-width: 96px;
-  max-width: 220px;
-  padding: 8px 10px;
-  border: 1px solid #d7e1ef;
-  border-top: 4px solid var(--accent);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.tree-node span {
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 950;
-}
-
-.tree-node strong {
-  color: var(--ink);
-  font-size: 0.9rem;
-  line-height: 1.25;
-}
-
-.tree-node em {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-style: normal;
-  line-height: 1.25;
-}
-
-.tree-node.role-subject {
-  border-top-color: var(--subject);
-}
-
-.tree-node.role-subject span,
-.tree-node.role-subject strong {
-  color: var(--subject);
-}
-
-.tree-node.role-verb {
-  border-top-color: var(--verb);
-}
-
-.tree-node.role-verb span,
-.tree-node.role-verb strong {
-  color: var(--verb);
-}
-
-.tree-node.role-prep {
-  border-top-color: var(--prep);
-}
-
-.tree-node.role-relative,
-.tree-node.role-linker {
-  border-top-color: var(--mark);
-}
-
 .fallback-translation {
   color: var(--muted);
   background: #f8fafc;
@@ -803,7 +689,6 @@ select {
 .clean-view .chunk-note,
 .clean-view .chunk-translation,
 .clean-view .exam-points,
-.clean-view .syntax-tree,
 .clean-view .sentence-head,
 .clean-view .translation {
   display: none;
