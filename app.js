@@ -820,10 +820,12 @@ function renderResults(blocks) {
         role: normalizeRole(typeof chunk === "string" ? "" : chunk.role, text, grammar),
       };
     });
+    const mainClauseRoles = getMainClauseSyntaxRoles(normalizedChunks);
 
     normalizedChunks.forEach((chunk, chunkIndex) => {
       const chunkText = chunk.text;
       const chunkNote = els.showGrammar.checked ? chunk.grammar : "";
+      const syntaxRole = mainClauseRoles.get(chunkIndex) || "";
       const chunkTranslation = chunk.translation;
       chunkTotal += 1;
       const item = document.createElement("div");
@@ -831,7 +833,7 @@ function renderResults(blocks) {
       item.innerHTML = `
         <span class="chunk-number">${chunkIndex + 1}</span>
         <div class="chunk-body">
-          <p class="chunk-text">${highlightSyntaxWords(chunkText, chunkNote)}</p>
+          <p class="chunk-text">${highlightSyntaxWords(chunkText, syntaxRole, chunkNote)}</p>
           ${chunkTranslation ? `<p class="chunk-translation">${escapeHtml(chunkTranslation)}</p>` : ""}
           ${chunkNote ? `<p class="chunk-note">${escapeHtml(chunkNote)}</p>` : ""}
         </div>
@@ -846,28 +848,105 @@ function renderResults(blocks) {
   setStats(blocks.length, chunkTotal, wordTotal);
 }
 
-function highlightSyntaxWords(text, grammar = "") {
+function getMainClauseSyntaxRoles(chunks) {
+  const roles = new Map();
+  let foundSubject = false;
+  let foundVerb = false;
+  let skippingAdverbial = false;
+  let skippingRelative = false;
+  let skippingNounClause = false;
+  let adverbialSawVerb = false;
+  let relativeSawVerb = false;
+
+  chunks.forEach((chunk, index) => {
+    if (foundVerb) return;
+
+    const text = String(chunk.text || "").trim();
+    const role = chunk.role || "";
+    const grammar = chunk.grammar || "";
+    const startsAdverbial = startsWithAdverbialClauseMarker(text);
+    const startsRelative = startsWithRelativeClauseMarker(text) || role === "relative";
+    const startsNounClause = foundSubject && (startsWithNounClauseMarker(text) || isNounClauseGrammar(grammar));
+    const verbLike = isVerbRole(role, text, grammar);
+
+    if (skippingAdverbial && adverbialSawVerb && isPotentialMainSubject(chunk)) {
+      skippingAdverbial = false;
+      adverbialSawVerb = false;
+    }
+
+    if (skippingRelative && relativeSawVerb && verbLike && !startsRelative) {
+      skippingRelative = false;
+      relativeSawVerb = false;
+    }
+
+    if (startsAdverbial && !foundSubject) {
+      skippingAdverbial = true;
+    }
+    if (startsRelative) {
+      skippingRelative = true;
+    }
+    if (startsNounClause && foundVerb) {
+      skippingNounClause = true;
+    }
+
+    if (skippingAdverbial || skippingRelative || skippingNounClause) {
+      if (verbLike) {
+        if (skippingAdverbial) adverbialSawVerb = true;
+        if (skippingRelative) relativeSawVerb = true;
+      }
+      if (endsClause(text)) {
+        skippingAdverbial = false;
+        skippingRelative = false;
+        skippingNounClause = false;
+        adverbialSawVerb = false;
+        relativeSawVerb = false;
+      }
+      return;
+    }
+
+    if (!foundSubject && role === "subject") {
+      if (verbLike) {
+        roles.set(index, "subject-verb");
+        foundSubject = true;
+        foundVerb = true;
+        return;
+      }
+      roles.set(index, "subject");
+      foundSubject = true;
+      return;
+    }
+
+    if (!foundVerb && verbLike && (foundSubject || isImperativeMainVerb(text))) {
+      roles.set(index, "verb");
+      foundVerb = true;
+    }
+  });
+
+  return roles;
+}
+
+function highlightSyntaxWords(text, syntaxRole = "", grammar = "") {
   if (isDiscourseChunk(text)) return escapeHtml(text);
 
   const parts = String(text || "").match(/[A-Za-z']+|[^A-Za-z']+/g) || [];
   const wordParts = parts
     .map((part, index) => ({ part, index, word: part.match(/^[A-Za-z']+$/) ? part : "" }))
     .filter((part) => part.word);
-  const firstVerbPosition = wordParts.findIndex(({ word }) => isLikelyVerb(word) || isModal(word));
   const subjectWordIndexes = new Set();
   const verbWordIndexes = new Set();
-  const grammarText = String(grammar || "");
 
-  if (firstVerbPosition >= 0) {
-    const verbPart = wordParts[firstVerbPosition];
+  if (syntaxRole === "verb" || syntaxRole === "subject-verb") {
+    const firstVerbPosition = wordParts.findIndex(({ word }) => isLikelyVerb(word) || isModal(word));
+    if (firstVerbPosition < 0) return escapeHtml(text);
     const verbWords = wordParts.map(({ word }) => word);
     const verbEnd = collectVerbPhraseEnd(verbWords, firstVerbPosition);
     wordParts.slice(firstVerbPosition, verbEnd).forEach(({ index }) => verbWordIndexes.add(index));
-
-    wordParts.slice(0, firstVerbPosition).forEach(({ word, index }) => {
-      if (!isConnectorWord(word) && !isAdverbWord(word)) subjectWordIndexes.add(index);
-    });
-  } else if (/주어|subject|that절 주어|부사절 \+ 주어/i.test(grammarText)) {
+    if (syntaxRole === "subject-verb") {
+      wordParts.slice(0, firstVerbPosition).forEach(({ word, index }) => {
+        if (!isConnectorWord(word) && !isRelativeWord(word) && !isAdverbWord(word)) subjectWordIndexes.add(index);
+      });
+    }
+  } else if (syntaxRole === "subject") {
     wordParts.forEach(({ word, index }) => {
       if (!isConnectorWord(word) && !isRelativeWord(word)) subjectWordIndexes.add(index);
     });
@@ -881,6 +960,56 @@ function highlightSyntaxWords(text, grammar = "") {
       return escaped;
     })
     .join("");
+}
+
+function isVerbRole(role, text = "", grammar = "") {
+  const clue = `${grammar} ${text}`;
+  return role === "verb" || /동사|verb|be동사|조동사/i.test(clue) || looksLikeVerbChunk(text);
+}
+
+function looksLikeVerbChunk(text) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  return words.some((word) => isLikelyVerb(word) || isModal(word));
+}
+
+function isPotentialMainSubject(chunk) {
+  const text = String(chunk.text || "").trim();
+  if (!text || startsWithClauseMarker(text) || startsWithPreposition(text) || isDiscourseChunk(text)) return false;
+  if (["verb", "prep", "relative", "linker", "adverb"].includes(chunk.role)) return false;
+  return chunk.role === "subject" || !looksLikeVerbChunk(text);
+}
+
+function startsWithClauseMarker(text) {
+  return startsWithAdverbialClauseMarker(text) || startsWithRelativeClauseMarker(text) || startsWithNounClauseMarker(text);
+}
+
+function startsWithAdverbialClauseMarker(text) {
+  return /^(when|while|if|although|though|because|since|as|after|before|unless|until|once|whereas|even\s+if|even\s+though)\b/i.test(text);
+}
+
+function startsWithRelativeClauseMarker(text) {
+  return /^(who|which|whose|whom)\b/i.test(text);
+}
+
+function startsWithNounClauseMarker(text) {
+  return /^(that|what|whether|if|how|why|where|when)\b/i.test(text);
+}
+
+function isNounClauseGrammar(grammar = "") {
+  return /명사절|that절|what절|whether절|if절/i.test(grammar);
+}
+
+function startsWithPreposition(text) {
+  return /^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i.test(text);
+}
+
+function endsClause(text) {
+  return /[,;:]$/.test(String(text || "").trim());
+}
+
+function isImperativeMainVerb(text) {
+  const first = cleanWord(String(text || "").split(/\s+/)[0] || "");
+  return Boolean(first) && isLikelyVerb(first) && !startsWithClauseMarker(text);
 }
 
 function isConnectorWord(word) {
