@@ -178,6 +178,7 @@ const els = {
 let activeView = "study";
 let currentAnalysis = [];
 let currentPassageInsight = null;
+let focusPositions = [];
 
 function setState(text, variant = "") {
   els.ocrState.textContent = text;
@@ -609,6 +610,7 @@ async function analyzeText() {
 
   currentAnalysis = blocks;
   currentPassageInsight = passageInsight;
+  resetFocusPositions(blocks);
   renderPassageInsight(currentPassageInsight);
   renderResults(blocks);
 }
@@ -814,6 +816,7 @@ function renderResults(blocks) {
   const fragment = document.createDocumentFragment();
   let chunkTotal = 0;
   const wordTotal = normalizeText(els.sourceText.value).split(/\s+/).filter(Boolean).length;
+  ensureFocusPositions(blocks);
 
   blocks.forEach((block, blockIndex) => {
     const node = els.sentenceTemplate.content.cloneNode(true);
@@ -825,7 +828,7 @@ function renderResults(blocks) {
     node.querySelector(".reveal-button").addEventListener("click", (event) => {
       const translation = event.currentTarget.closest(".sentence-block").querySelector(".translation");
       translation.hidden = !translation.hidden;
-      event.currentTarget.textContent = translation.hidden ? "해석 보기" : "해석 숨기기";
+      event.currentTarget.textContent = translation.hidden ? "전체 해석" : "해석 숨기기";
     });
 
     const list = node.querySelector(".chunk-list");
@@ -840,6 +843,9 @@ function renderResults(blocks) {
       };
     });
     const mainClauseRoles = getMainClauseSyntaxRoles(normalizedChunks);
+    const currentChunkIndex = clampFocusIndex(focusPositions[blockIndex] || 0, normalizedChunks.length);
+    focusPositions[blockIndex] = currentChunkIndex;
+    setupFocusControls(node, blockIndex, currentChunkIndex, normalizedChunks.length);
 
     normalizedChunks.forEach((chunk, chunkIndex) => {
       const chunkText = chunk.text;
@@ -848,7 +854,16 @@ function renderResults(blocks) {
       const chunkTranslation = chunk.translation;
       chunkTotal += 1;
       const item = document.createElement("div");
-      item.className = "chunk-item";
+      item.className = `chunk-item ${getFocusStateClass(chunkIndex, currentChunkIndex)}`;
+      item.tabIndex = 0;
+      item.setAttribute("role", "button");
+      item.setAttribute("aria-label", `${chunkIndex + 1}번 청크로 이동`);
+      item.addEventListener("click", () => moveFocusToChunk(blockIndex, chunkIndex));
+      item.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        moveFocusToChunk(blockIndex, chunkIndex);
+      });
       item.innerHTML = `
         <span class="chunk-number">${chunkIndex + 1}</span>
         <div class="chunk-body">
@@ -865,6 +880,43 @@ function renderResults(blocks) {
 
   els.resultArea.append(fragment);
   setStats(blocks.length, chunkTotal, wordTotal);
+}
+
+function resetFocusPositions(blocks) {
+  focusPositions = blocks.map(() => 0);
+}
+
+function ensureFocusPositions(blocks) {
+  if (focusPositions.length !== blocks.length) resetFocusPositions(blocks);
+}
+
+function clampFocusIndex(index, chunkCount) {
+  if (!chunkCount) return 0;
+  return Math.min(Math.max(Number(index) || 0, 0), chunkCount - 1);
+}
+
+function setupFocusControls(node, blockIndex, currentIndex, chunkCount) {
+  const progress = node.querySelector(".focus-progress");
+  const prevButton = node.querySelector(".focus-prev");
+  const nextButton = node.querySelector(".focus-next");
+  progress.textContent = `${currentIndex + 1} / ${chunkCount}`;
+  prevButton.disabled = currentIndex === 0;
+  nextButton.disabled = currentIndex >= chunkCount - 1;
+  prevButton.addEventListener("click", () => moveFocusToChunk(blockIndex, currentIndex - 1));
+  nextButton.addEventListener("click", () => moveFocusToChunk(blockIndex, currentIndex + 1));
+}
+
+function moveFocusToChunk(blockIndex, chunkIndex) {
+  const chunkCount = currentAnalysis[blockIndex]?.chunks?.length || 0;
+  focusPositions[blockIndex] = clampFocusIndex(chunkIndex, chunkCount);
+  renderResults(currentAnalysis);
+}
+
+function getFocusStateClass(chunkIndex, currentIndex) {
+  if (activeView === "clean") return "";
+  if (chunkIndex < currentIndex) return "is-done";
+  if (chunkIndex === currentIndex) return "is-current";
+  return "is-upcoming";
 }
 
 function getMainClauseSyntaxRoles(chunks) {
