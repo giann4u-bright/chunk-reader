@@ -178,7 +178,7 @@ const els = {
 let activeView = "study";
 let currentAnalysis = [];
 let currentPassageInsight = null;
-let focusPositions = [];
+let activeFocus = { blockIndex: 0, chunkIndex: 0 };
 
 function setState(text, variant = "") {
   els.ocrState.textContent = text;
@@ -610,7 +610,7 @@ async function analyzeText() {
 
   currentAnalysis = blocks;
   currentPassageInsight = passageInsight;
-  resetFocusPositions(blocks);
+  resetFocusPosition();
   renderPassageInsight(currentPassageInsight);
   renderResults(blocks);
 }
@@ -816,7 +816,8 @@ function renderResults(blocks) {
   const fragment = document.createDocumentFragment();
   let chunkTotal = 0;
   const wordTotal = normalizeText(els.sourceText.value).split(/\s+/).filter(Boolean).length;
-  ensureFocusPositions(blocks);
+  const focusMeta = getFocusMeta(blocks);
+  let globalChunkIndex = 0;
 
   blocks.forEach((block, blockIndex) => {
     const node = els.sentenceTemplate.content.cloneNode(true);
@@ -843,9 +844,7 @@ function renderResults(blocks) {
       };
     });
     const mainClauseRoles = getMainClauseSyntaxRoles(normalizedChunks);
-    const currentChunkIndex = clampFocusIndex(focusPositions[blockIndex] || 0, normalizedChunks.length);
-    focusPositions[blockIndex] = currentChunkIndex;
-    setupFocusControls(node, blockIndex, currentChunkIndex, normalizedChunks.length);
+    setupFocusControls(node, blockIndex, focusMeta);
 
     normalizedChunks.forEach((chunk, chunkIndex) => {
       const chunkText = chunk.text;
@@ -854,15 +853,16 @@ function renderResults(blocks) {
       const chunkTranslation = chunk.translation;
       chunkTotal += 1;
       const item = document.createElement("div");
-      item.className = `chunk-item ${getFocusStateClass(chunkIndex, currentChunkIndex)}`;
+      const absoluteChunkIndex = globalChunkIndex;
+      item.className = `chunk-item ${getFocusStateClass(absoluteChunkIndex, focusMeta.absoluteIndex)}`;
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("aria-label", `${chunkIndex + 1}번 청크로 이동`);
-      item.addEventListener("click", () => moveFocusToChunk(blockIndex, chunkIndex));
+      item.addEventListener("click", () => activateChunk(blockIndex, chunkIndex, absoluteChunkIndex));
       item.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
-        moveFocusToChunk(blockIndex, chunkIndex);
+        activateChunk(blockIndex, chunkIndex, absoluteChunkIndex);
       });
       item.innerHTML = `
         <span class="chunk-number">${chunkIndex + 1}</span>
@@ -873,6 +873,7 @@ function renderResults(blocks) {
         </div>
       `;
       list.append(item);
+      globalChunkIndex += 1;
     });
 
     fragment.append(node);
@@ -882,33 +883,40 @@ function renderResults(blocks) {
   setStats(blocks.length, chunkTotal, wordTotal);
 }
 
-function resetFocusPositions(blocks) {
-  focusPositions = blocks.map(() => 0);
+function resetFocusPosition() {
+  activeFocus = { blockIndex: 0, chunkIndex: 0 };
 }
 
-function ensureFocusPositions(blocks) {
-  if (focusPositions.length !== blocks.length) resetFocusPositions(blocks);
-}
-
-function clampFocusIndex(index, chunkCount) {
-  if (!chunkCount) return 0;
-  return Math.min(Math.max(Number(index) || 0, 0), chunkCount - 1);
-}
-
-function setupFocusControls(node, blockIndex, currentIndex, chunkCount) {
+function setupFocusControls(node, blockIndex, focusMeta) {
   const progress = node.querySelector(".focus-progress");
   const prevButton = node.querySelector(".focus-prev");
   const nextButton = node.querySelector(".focus-next");
-  progress.textContent = `${currentIndex + 1} / ${chunkCount}`;
-  prevButton.disabled = currentIndex === 0;
-  nextButton.disabled = currentIndex >= chunkCount - 1;
-  prevButton.addEventListener("click", () => moveFocusToChunk(blockIndex, currentIndex - 1));
-  nextButton.addEventListener("click", () => moveFocusToChunk(blockIndex, currentIndex + 1));
+  const isActiveBlock = blockIndex === activeFocus.blockIndex;
+  progress.textContent = isActiveBlock ? `${focusMeta.absoluteIndex + 1} / ${focusMeta.total}` : "";
+  prevButton.disabled = !isActiveBlock || focusMeta.absoluteIndex === 0;
+  nextButton.disabled = !isActiveBlock || focusMeta.absoluteIndex >= focusMeta.total - 1;
+  prevButton.addEventListener("click", () => moveFocusBy(-1));
+  nextButton.addEventListener("click", () => moveFocusBy(1));
 }
 
 function moveFocusToChunk(blockIndex, chunkIndex) {
-  const chunkCount = currentAnalysis[blockIndex]?.chunks?.length || 0;
-  focusPositions[blockIndex] = clampFocusIndex(chunkIndex, chunkCount);
+  activeFocus = normalizeFocus(currentAnalysis, { blockIndex, chunkIndex });
+  renderResults(currentAnalysis);
+}
+
+function activateChunk(blockIndex, chunkIndex, absoluteChunkIndex) {
+  const focusMeta = getFocusMeta(currentAnalysis);
+  if (absoluteChunkIndex === focusMeta.absoluteIndex) {
+    moveFocusBy(1);
+    return;
+  }
+  moveFocusToChunk(blockIndex, chunkIndex);
+}
+
+function moveFocusBy(delta) {
+  const focusMeta = getFocusMeta(currentAnalysis);
+  const nextAbsoluteIndex = Math.min(Math.max(focusMeta.absoluteIndex + delta, 0), focusMeta.total - 1);
+  activeFocus = focusFromAbsoluteIndex(currentAnalysis, nextAbsoluteIndex);
   renderResults(currentAnalysis);
 }
 
@@ -917,6 +925,46 @@ function getFocusStateClass(chunkIndex, currentIndex) {
   if (chunkIndex < currentIndex) return "is-done";
   if (chunkIndex === currentIndex) return "is-current";
   return "is-upcoming";
+}
+
+function getFocusMeta(blocks) {
+  activeFocus = normalizeFocus(blocks, activeFocus);
+  let total = 0;
+  let absoluteIndex = 0;
+  blocks.forEach((block, blockIndex) => {
+    const count = block.chunks?.length || 0;
+    if (blockIndex < activeFocus.blockIndex) absoluteIndex += count;
+    total += count;
+  });
+  absoluteIndex += activeFocus.chunkIndex;
+  return { absoluteIndex, total: Math.max(total, 1) };
+}
+
+function normalizeFocus(blocks, focus) {
+  const blockCount = blocks.length;
+  if (!blockCount) return { blockIndex: 0, chunkIndex: 0 };
+  const blockIndex = Math.min(Math.max(Number(focus.blockIndex) || 0, 0), blockCount - 1);
+  const chunkCount = blocks[blockIndex]?.chunks?.length || 1;
+  const chunkIndex = Math.min(Math.max(Number(focus.chunkIndex) || 0, 0), chunkCount - 1);
+  return { blockIndex, chunkIndex };
+}
+
+function focusFromAbsoluteIndex(blocks, absoluteIndex) {
+  let remaining = Math.max(Number(absoluteIndex) || 0, 0);
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+    const count = blocks[blockIndex]?.chunks?.length || 0;
+    if (remaining < count) return { blockIndex, chunkIndex: remaining };
+    remaining -= count;
+  }
+  const lastBlockIndex = Math.max(blocks.length - 1, 0);
+  const lastChunkIndex = Math.max((blocks[lastBlockIndex]?.chunks?.length || 1) - 1, 0);
+  return { blockIndex: lastBlockIndex, chunkIndex: lastChunkIndex };
+}
+
+function shouldIgnoreReaderShortcut(event) {
+  const target = event.target;
+  if (!target) return false;
+  return Boolean(target.closest?.("input, textarea, select, button, [contenteditable='true']"));
 }
 
 function getMainClauseSyntaxRoles(chunks) {
@@ -1258,6 +1306,24 @@ els.showGrammar.addEventListener("change", () => {
 });
 
 els.chunkLevel.addEventListener("change", analyzeText);
+
+els.resultArea.addEventListener("click", (event) => {
+  if (!currentAnalysis.length || activeView === "clean") return;
+  if (event.target.closest(".chunk-item, .focus-controls, .exam-points, .translation")) return;
+  moveFocusBy(1);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (!currentAnalysis.length || activeView === "clean" || shouldIgnoreReaderShortcut(event)) return;
+  if (event.key === "Enter" || event.key === "ArrowRight" || event.key === "ArrowDown") {
+    event.preventDefault();
+    moveFocusBy(1);
+  }
+  if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    event.preventDefault();
+    moveFocusBy(-1);
+  }
+});
 
 els.tabs.forEach((tab) => {
   tab.addEventListener("click", () => {

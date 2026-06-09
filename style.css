@@ -541,6 +541,7 @@ select {
 .result-area {
   display: grid;
   gap: 14px;
+  touch-action: manipulation;
 }
 
 .result-area.empty {
@@ -623,6 +624,7 @@ select {
   gap: 10px;
   align-items: start;
   cursor: pointer;
+  touch-action: manipulation;
   transition:
     opacity 160ms ease,
     transform 160ms ease,
