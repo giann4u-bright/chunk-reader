@@ -201,6 +201,7 @@ function splitSentences(text) {
 
 function chunkSentence(sentence, level) {
   if (level === "fine") return chunkSentenceForBeginners(sentence);
+  if (level === "exam") return chunkSentenceForExam(sentence);
 
   const protectedSentence = sentence.replace(/\b(Mr|Ms|Dr|U\.S|U\.K)\./g, (match) => match.replace(".", "<dot>"));
   const clausePattern =
@@ -213,6 +214,24 @@ function chunkSentence(sentence, level) {
 
   return chunks
     .flatMap((chunk) => splitLongChunk(chunk.replace(/<dot>/g, "."), maxWords))
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+}
+
+function chunkSentenceForExam(sentence) {
+  const protectedSentence = sentence.replace(/\b(Mr|Ms|Dr|U\.S|U\.K)\./g, (match) => match.replace(".", "<dot>"));
+  return protectedSentence
+    .replace(/\b(Suppose),\s*(for example),/gi, "$1<comma> $2|")
+    .replace(/,\s*(however|therefore|for example|for instance|in contrast|as a result),\s*/gi, "|$1 ")
+    .replace(/,\s*/g, "|")
+    .replace(/<comma>/g, ",")
+    .replace(/\s+(?=(?:however|therefore|instead|meanwhile|otherwise)\b)/gi, "|")
+    .replace(/\s+(?=(?:because|when|while|if|although|though|since|as|after|before|unless|whereas|even\s+if|even\s+though)\b)/gi, "|")
+    .replace(/\s+(?=(?:who|which|whose|whom|that)\b)/gi, "|")
+    .replace(/\s+(?=(?:in order to|so as to|as a result of|because of|due to|according to)\b)/gi, "|")
+    .replace(/\s+(?=(?:with|without|by|for|from|into|through|during|between|among|under|over)\b)/gi, "|")
+    .split("|")
+    .flatMap((chunk) => splitLongChunk(chunk.replace(/<dot>/g, "."), 12))
     .map((chunk) => chunk.trim())
     .filter(Boolean);
 }
@@ -850,8 +869,9 @@ function renderResults(blocks) {
 
 function getMainClauseSyntaxRoles(chunks) {
   const roles = new Map();
-  let foundSubject = false;
-  let foundVerb = false;
+  let subjectStarted = false;
+  let foundMainVerb = false;
+  let awaitingTrueSubject = false;
   let skippingAdverbial = false;
   let skippingRelative = false;
   let skippingNounClause = false;
@@ -859,15 +879,16 @@ function getMainClauseSyntaxRoles(chunks) {
   let relativeSawVerb = false;
 
   chunks.forEach((chunk, index) => {
-    if (foundVerb) return;
+    if (foundMainVerb && !awaitingTrueSubject) return;
 
     const text = String(chunk.text || "").trim();
     const role = chunk.role || "";
     const grammar = chunk.grammar || "";
     const startsAdverbial = startsWithAdverbialClauseMarker(text);
     const startsRelative = startsWithRelativeClauseMarker(text) || role === "relative";
-    const startsNounClause = foundSubject && (startsWithNounClauseMarker(text) || isNounClauseGrammar(grammar));
+    const startsNounClause = subjectStarted && (startsWithNounClauseMarker(text) || isNounClauseGrammar(grammar));
     const verbLike = isVerbRole(role, text, grammar);
+    const nominalSubject = isNominalSubjectChunk(text, grammar);
 
     if (skippingAdverbial && adverbialSawVerb && isPotentialMainSubject(chunk)) {
       skippingAdverbial = false;
@@ -879,13 +900,13 @@ function getMainClauseSyntaxRoles(chunks) {
       relativeSawVerb = false;
     }
 
-    if (startsAdverbial && !foundSubject) {
+    if (startsAdverbial && !subjectStarted) {
       skippingAdverbial = true;
     }
     if (startsRelative) {
       skippingRelative = true;
     }
-    if (startsNounClause && foundVerb) {
+    if (startsNounClause && foundMainVerb) {
       skippingNounClause = true;
     }
 
@@ -904,21 +925,44 @@ function getMainClauseSyntaxRoles(chunks) {
       return;
     }
 
-    if (!foundSubject && role === "subject") {
-      if (verbLike) {
-        roles.set(index, "subject-verb");
-        foundSubject = true;
-        foundVerb = true;
+    if (awaitingTrueSubject) {
+      if (!foundMainVerb && verbLike) {
+        roles.set(index, "verb");
+        foundMainVerb = true;
         return;
       }
-      roles.set(index, "subject");
-      foundSubject = true;
+      if (isTrueSubjectCandidate(chunk)) {
+        roles.set(index, "subject");
+        awaitingTrueSubject = false;
+      }
       return;
     }
 
-    if (!foundVerb && verbLike && (foundSubject || isImperativeMainVerb(text))) {
+    if (!subjectStarted && role === "subject") {
+      if (isExpletiveItChunk(text)) {
+        awaitingTrueSubject = true;
+        subjectStarted = true;
+        return;
+      }
+      if (verbLike && !nominalSubject) {
+        roles.set(index, "subject-verb");
+        subjectStarted = true;
+        foundMainVerb = true;
+        return;
+      }
+      roles.set(index, "subject");
+      subjectStarted = true;
+      return;
+    }
+
+    if (subjectStarted && !foundMainVerb && !verbLike && isSubjectContinuation(chunk)) {
+      roles.set(index, "subject");
+      return;
+    }
+
+    if (!foundMainVerb && verbLike && (subjectStarted || isImperativeMainVerb(text))) {
       roles.set(index, "verb");
-      foundVerb = true;
+      foundMainVerb = true;
     }
   });
 
@@ -948,7 +992,7 @@ function highlightSyntaxWords(text, syntaxRole = "", grammar = "") {
     }
   } else if (syntaxRole === "subject") {
     wordParts.forEach(({ word, index }) => {
-      if (!isConnectorWord(word) && !isRelativeWord(word)) subjectWordIndexes.add(index);
+      if (!isRelativeWord(word)) subjectWordIndexes.add(index);
     });
   }
 
@@ -979,6 +1023,33 @@ function isPotentialMainSubject(chunk) {
   return chunk.role === "subject" || !looksLikeVerbChunk(text);
 }
 
+function isExpletiveItChunk(text) {
+  return /^it$/i.test(String(text || "").trim());
+}
+
+function isTrueSubjectCandidate(chunk) {
+  const text = String(chunk.text || "").trim();
+  const grammar = String(chunk.grammar || "");
+  return isNominalSubjectChunk(text, grammar) || chunk.role === "subject";
+}
+
+function isNominalSubjectChunk(text, grammar = "") {
+  const clean = String(text || "").trim();
+  return (
+    startsWithToInfinitive(clean) ||
+    startsWithGerundPhrase(clean) ||
+    startsWithNounClauseMarker(clean) ||
+    /동명사구|to부정사구|명사절|진주어|주어구/i.test(grammar)
+  );
+}
+
+function isSubjectContinuation(chunk) {
+  const text = String(chunk.text || "").trim();
+  if (!text || isDiscourseChunk(text) || startsWithClauseMarker(text)) return false;
+  if (["relative", "linker", "adverb"].includes(chunk.role)) return false;
+  return chunk.role === "subject" || chunk.role === "prep" || startsWithPreposition(text) || isNounModifierChunk(text);
+}
+
 function startsWithClauseMarker(text) {
   return startsWithAdverbialClauseMarker(text) || startsWithRelativeClauseMarker(text) || startsWithNounClauseMarker(text);
 }
@@ -995,12 +1066,25 @@ function startsWithNounClauseMarker(text) {
   return /^(that|what|whether|if|how|why|where|when)\b/i.test(text);
 }
 
+function startsWithToInfinitive(text) {
+  return /^to\s+[a-z]+/i.test(text);
+}
+
+function startsWithGerundPhrase(text) {
+  const first = cleanWord(String(text || "").split(/\s+/)[0] || "");
+  return Boolean(first) && isGerund(first);
+}
+
 function isNounClauseGrammar(grammar = "") {
   return /명사절|that절|what절|whether절|if절/i.test(grammar);
 }
 
 function startsWithPreposition(text) {
   return /^(about|of|to|for|from|in|on|at|by|with|without|into|onto|over|under|between|among|through|during|before|after|than)\b/i.test(text);
+}
+
+function isNounModifierChunk(text) {
+  return /^(the|a|an|this|that|these|those|my|your|his|her|our|their|its)\b/i.test(text) && !looksLikeVerbChunk(text);
 }
 
 function endsClause(text) {
