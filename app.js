@@ -117,6 +117,54 @@ const sampleFineAnalysis = [
   },
 ];
 
+const sampleExamAnalysis = [
+  {
+    sentence: "When people think about success, they often imagine a person who has a special talent.",
+    translation: "사람들은 성공을 생각할 때, 특별한 재능을 가진 사람을 자주 떠올립니다.",
+    source: "demo",
+    points: {
+      structure: "When절 뒤에 주절 they often imagine a person이 이어지고, who절이 a person을 설명합니다.",
+      pronouns: "they = people, who = a person",
+      flow: "성공에 대한 통념을 제시합니다.",
+    },
+    chunks: [
+      { text: "When people think about success", translation: "사람들이 성공에 대해 생각할 때", grammar: "시간 부사절", role: "adverb" },
+      { text: "they often imagine a person", translation: "그들은 자주 한 사람을 떠올린다", grammar: "주절", role: "subject" },
+      { text: "who has a special talent.", translation: "특별한 재능을 가진", grammar: "관계사절", role: "relative" },
+    ],
+  },
+  {
+    sentence: "However, many studies show that steady practice and clear feedback are more important than talent alone.",
+    translation: "하지만 많은 연구는 꾸준한 연습과 명확한 피드백이 재능만 있는 것보다 더 중요하다는 점을 보여 줍니다.",
+    source: "demo",
+    points: {
+      structure: "However로 전환한 뒤, many studies show가 주절이고 that절 전체가 목적어입니다.",
+      pronouns: "",
+      flow: "앞의 통념을 반박하며 핵심 주장으로 전환합니다.",
+    },
+    chunks: [
+      { text: "However", translation: "하지만", grammar: "역접 연결어", role: "linker" },
+      { text: "many studies show", translation: "많은 연구가 보여 준다", grammar: "주절", role: "subject" },
+      { text: "that steady practice and clear feedback are more important than talent alone.", translation: "꾸준한 연습과 명확한 피드백이 재능만 있는 것보다 더 중요하다는 것을", grammar: "that 명사절", role: "object" },
+    ],
+  },
+  {
+    sentence: "Students who divide a difficult task into small steps can understand it better and remember it longer.",
+    translation: "어려운 과제를 작은 단계로 나누는 학생들은 그것을 더 잘 이해하고 더 오래 기억할 수 있습니다.",
+    source: "demo",
+    points: {
+      structure: "Students가 주절 주어이고, who절이 Students를 꾸미며, can understand and remember가 주절 동사구입니다.",
+      pronouns: "who = Students, it = a difficult task",
+      flow: "앞 문장의 주장을 공부 방법으로 적용합니다.",
+    },
+    chunks: [
+      { text: "Students", translation: "학생들은", grammar: "주절 주어", role: "subject" },
+      { text: "who divide a difficult task into small steps", translation: "어려운 과제를 작은 단계로 나누는", grammar: "관계사절", role: "relative" },
+      { text: "can understand it better and remember it longer.", translation: "그것을 더 잘 이해하고 더 오래 기억할 수 있다", grammar: "주절 동사구", role: "verb" },
+    ],
+  },
+];
+
 const samplePassageInsight = {
   topic: {
     ko: "성공에는 타고난 재능보다 꾸준한 연습과 피드백이 더 중요하다.",
@@ -595,7 +643,7 @@ async function analyzeText() {
   try {
     const aiAnalysis = await requestAiAnalysis(normalizeText(els.sourceText.value), level);
     if (Array.isArray(aiAnalysis.sentences) && aiAnalysis.sentences.length) {
-      blocks = sanitizeAiBlocks(aiAnalysis.sentences, fallbackBlocks);
+      blocks = sanitizeAiBlocks(aiAnalysis.sentences, fallbackBlocks, level);
       passageInsight = normalizePassageInsight(aiAnalysis.passage) || passageInsight;
       setState("AI 해석 완료");
     } else {
@@ -617,7 +665,9 @@ async function analyzeText() {
 
 function buildFallbackAnalysis(sentences, level) {
   if (normalizeText(els.sourceText.value) === normalizeText(sampleText)) {
-    return level === "fine" ? sampleFineAnalysis : sampleAnalysis;
+    if (level === "fine") return sampleFineAnalysis;
+    if (level === "exam") return sampleExamAnalysis;
+    return sampleAnalysis;
   }
 
   return sentences.map((sentence) => {
@@ -663,11 +713,11 @@ async function requestAiAnalysis(text, level) {
   return data;
 }
 
-function sanitizeAiBlocks(aiBlocks, fallbackBlocks) {
+function sanitizeAiBlocks(aiBlocks, fallbackBlocks, level = "balanced") {
   return fallbackBlocks.map((fallback, index) => {
     const ai = aiBlocks[index] ?? {};
     const aiChunks = Array.isArray(ai.chunks) ? ai.chunks : [];
-    const chunks = aiChunks.length
+    let chunks = aiChunks.length
       ? aiChunks.map((chunk, chunkIndex) => ({
           text: normalizeText(String(chunk.text || fallback.chunks[chunkIndex]?.text || "")),
           translation: String(chunk.translation || "").trim(),
@@ -678,6 +728,9 @@ function sanitizeAiBlocks(aiBlocks, fallbackBlocks) {
           ...chunk,
           role: normalizeRole(chunk.role, chunk.text, chunk.grammar),
         }));
+    if (level === "exam") {
+      chunks = coarsenExamChunks(chunks, fallback.chunks);
+    }
 
     return {
       sentence: normalizeText(String(ai.original || fallback.sentence)),
@@ -687,6 +740,75 @@ function sanitizeAiBlocks(aiBlocks, fallbackBlocks) {
       source: ai.translation ? "ai" : "fallback",
     };
   });
+}
+
+function coarsenExamChunks(chunks, fallbackChunks = []) {
+  if (!chunks.length) return fallbackChunks;
+  const grouped = [];
+  let buffer = null;
+
+  chunks.forEach((chunk) => {
+    const current = { ...chunk, role: chunk.role || inferChunkRole(chunk.text, chunk.grammar) };
+    if (!buffer) {
+      buffer = current;
+      return;
+    }
+
+    if (shouldStartExamChunk(current, buffer)) {
+      grouped.push(buffer);
+      buffer = current;
+      return;
+    }
+
+    if (canMergeExamChunks(buffer, current)) {
+      buffer = mergeExamChunkPair(buffer, current);
+      return;
+    }
+
+    grouped.push(buffer);
+    buffer = current;
+  });
+
+  if (buffer) grouped.push(buffer);
+  return grouped.length ? grouped : fallbackChunks;
+}
+
+function shouldStartExamChunk(chunk, buffer) {
+  const text = chunk.text || "";
+  if (isDiscourseChunk(text)) return true;
+  if (startsWithAdverbialClauseMarker(text) || startsWithRelativeClauseMarker(text)) return true;
+  if (startsWithNounClauseMarker(text) && buffer.role !== "verb") return true;
+  return false;
+}
+
+function canMergeExamChunks(left, right) {
+  const mergedText = `${left.text} ${right.text}`.trim();
+  const mergedWordCount = countWords(mergedText);
+  if (mergedWordCount > 14) return false;
+  if (isDiscourseChunk(left.text) || isDiscourseChunk(right.text)) return false;
+  if (startsWithAdverbialClauseMarker(right.text) || startsWithRelativeClauseMarker(right.text)) return false;
+  if (left.role === "subject" && right.role === "verb") return true;
+  if (left.role === "verb" && ["object", "complement", "prep", ""].includes(right.role)) return true;
+  if (left.role === "verb" && /^and\b/i.test(right.text) && looksLikeVerbChunk(right.text)) return true;
+  if (left.role === "object" && startsWithPreposition(right.text)) return true;
+  if (countWords(left.text) < 5 && countWords(right.text) < 8 && !startsWithNounClauseMarker(right.text)) return true;
+  return false;
+}
+
+function mergeExamChunkPair(left, right) {
+  const text = normalizeText(`${left.text} ${right.text}`);
+  const translation = [left.translation, right.translation].filter(Boolean).join(" ");
+  const grammar = [left.grammar, right.grammar].filter(Boolean).join(" + ");
+  return {
+    text,
+    translation,
+    grammar,
+    role: left.role === "subject" && right.role === "verb" ? "subject" : left.role || right.role,
+  };
+}
+
+function countWords(text) {
+  return String(text || "").split(/\s+/).filter(Boolean).length;
 }
 
 function normalizePassageInsight(passage = {}) {
