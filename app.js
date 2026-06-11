@@ -816,7 +816,7 @@ function sanitizeAiBlocks(aiBlocks, fallbackBlocks, level = "balanced") {
       sentence: normalizeText(String(ai.original || fallback.sentence)),
       chunks: chunks.filter((chunk) => chunk.text),
       translation: String(ai.translation || fallback.translation).trim(),
-      syntax: normalizeSyntax(ai.syntax || fallback.syntax),
+      syntax: normalizeSyntax(ai.syntax),
       points: normalizePoints(ai.points || fallback.points),
       source: ai.translation ? "ai" : "fallback",
     };
@@ -941,13 +941,6 @@ function normalizePoints(points = {}) {
     structure: String(points.structure || "").trim(),
     pronouns: String(points.pronouns || "").trim(),
     flow: String(points.flow || "").trim(),
-  };
-}
-
-function normalizeSyntax(syntax = {}) {
-  return {
-    subject: String(syntax.subject || syntax.mainSubject || "").trim(),
-    verb: String(syntax.verb || syntax.mainVerb || "").trim(),
   };
 }
 
@@ -1089,12 +1082,19 @@ function renderResults(blocks) {
         role: normalizeRole(typeof chunk === "string" ? "" : chunk.role, text, grammar, { infer: !hasExplicitRole }),
       };
     });
-    const syntaxTargets = normalizeSyntax(block.syntax);
+    const mainClauseRoles = getMainClauseSyntaxRoles(normalizedChunks);
+    const blockSyntax = normalizeSyntax(block.syntax);
+    const syntaxMatched =
+      blockSyntax &&
+      normalizedChunks.some(
+        (chunk) => findSyntaxRange(chunk.text, blockSyntax.subject) || findSyntaxRange(chunk.text, blockSyntax.verb),
+      );
     setupFocusControls(node, blockIndex, focusMeta);
 
     normalizedChunks.forEach((chunk, chunkIndex) => {
       const chunkText = chunk.text;
       const chunkNote = els.showGrammar.checked ? chunk.grammar : "";
+      const syntaxRole = mainClauseRoles.get(chunkIndex) || "";
       const chunkTranslation = chunk.translation;
       chunkTotal += 1;
       const item = document.createElement("div");
@@ -1113,7 +1113,7 @@ function renderResults(blocks) {
       item.innerHTML = `
         <span class="chunk-number">${chunkIndex + 1}</span>
         <div class="chunk-body">
-          <p class="chunk-text">${highlightSyntaxWords(chunkText, syntaxTargets)}</p>
+          <p class="chunk-text">${syntaxMatched ? highlightBySyntax(chunkText, blockSyntax) : highlightSyntaxWords(chunkText, syntaxRole, chunkNote)}</p>
           ${chunkTranslation ? `<p class="chunk-translation">${escapeHtml(chunkTranslation)}</p>` : ""}
           ${chunkNote ? `<p class="chunk-note">${escapeHtml(chunkNote)}</p>` : ""}
         </div>
@@ -1377,65 +1377,127 @@ function getMainClauseSyntaxRoles(chunks) {
   return roles;
 }
 
-function highlightSyntaxWords(text, syntax = {}) {
-  if (isDiscourseChunk(text)) return escapeHtml(text);
+function normalizeSyntax(syntax) {
+  if (!syntax || typeof syntax !== "object") return null;
+  const subject = String(syntax.subject || "").trim();
+  const verb = String(syntax.verb || "").trim();
+  if (!subject && !verb) return null;
+  return { subject, verb };
+}
 
-  const source = String(text || "");
-  const ranges = [
-    ...findSyntaxRanges(source, syntax.subject, "subject"),
-    ...findSyntaxRanges(source, syntax.verb, "verb"),
-  ].sort((a, b) => a.start - b.start || b.end - a.end);
+function findSyntaxRange(haystack, needle) {
+  if (!needle) return null;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(^|[^A-Za-z])(${escaped})(?=[^A-Za-z]|$)`, "i");
+  const match = pattern.exec(String(haystack || ""));
+  if (!match) return null;
+  const start = match.index + match[1].length;
+  return [start, start + match[2].length];
+}
 
-  if (!ranges.length) return escapeHtml(source);
+// AI가 알려준 정확한 주어/동사 문자열을 그대로 강조 (휴리스틱보다 우선)
+function highlightBySyntax(text, syntax) {
+  const raw = String(text || "");
+  const subjectRange = syntax.subject ? findSyntaxRange(raw, syntax.subject) : null;
+  let verbRange = syntax.verb ? findSyntaxRange(raw, syntax.verb) : null;
+  if (subjectRange && verbRange && verbRange[0] < subjectRange[1] && verbRange[1] > subjectRange[0]) {
+    verbRange = null; // 겹치면 주어 우선
+  }
+  const ranges = [];
+  if (subjectRange) ranges.push({ type: "subject", start: subjectRange[0], end: subjectRange[1] });
+  if (verbRange) ranges.push({ type: "verb", start: verbRange[0], end: verbRange[1] });
+  if (!ranges.length) return escapeHtml(raw);
+  ranges.sort((a, b) => a.start - b.start);
 
-  const parts = [];
+  let html = "";
   let cursor = 0;
   ranges.forEach((range) => {
-    if (range.start < cursor) return;
-    if (range.start > cursor) parts.push(escapeHtml(source.slice(cursor, range.start)));
-    const className = range.type === "subject" ? "syntax-subject" : "syntax-verb";
-    parts.push(`<span class="${className}">${escapeHtml(source.slice(range.start, range.end))}</span>`);
+    html += escapeHtml(raw.slice(cursor, range.start));
+    const isSubject = range.type === "subject";
+    const tag = isSubject
+      ? '<span class="syntax-tag tag-subject" aria-label="주어">S</span>'
+      : '<span class="syntax-tag tag-verb" aria-label="동사">V</span>';
+    html += `${tag}<span class="${isSubject ? "syntax-subject" : "syntax-verb"}">${escapeHtml(raw.slice(range.start, range.end))}</span>`;
     cursor = range.end;
   });
-  if (cursor < source.length) parts.push(escapeHtml(source.slice(cursor)));
-  return parts.join("");
+  html += escapeHtml(raw.slice(cursor));
+  return html;
 }
 
-function findSyntaxRanges(text, target, type) {
-  const needle = String(target || "").trim();
-  if (!needle) return [];
-  const normalizedNeedle = normalizeSyntaxTarget(needle);
-  const normalizedText = normalizeSyntaxTarget(text);
-  if (!normalizedNeedle || normalizedNeedle.length < 2) return [];
+function highlightSyntaxWords(text, syntaxRole = "", grammar = "") {
+  if (isDiscourseChunk(text)) return escapeHtml(text);
 
-  const ranges = [];
-  let searchIndex = 0;
-  while (searchIndex <= normalizedText.length) {
-    const found = normalizedText.indexOf(normalizedNeedle, searchIndex);
-    if (found === -1) break;
-    const end = found + normalizedNeedle.length;
-    if (hasWordBoundary(normalizedText, found, end)) {
-      ranges.push({ start: found, end, type });
-      break;
+  const parts = String(text || "").match(/[A-Za-z']+|[^A-Za-z']+/g) || [];
+  const wordParts = parts
+    .map((part, index) => ({ part, index, word: part.match(/^[A-Za-z']+$/) ? part : "" }))
+    .filter((part) => part.word);
+  const subjectWordIndexes = new Set();
+  const verbWordIndexes = new Set();
+
+  if (syntaxRole === "verb" || syntaxRole === "subject-verb") {
+    // "The renowned ..."처럼 한정사 바로 뒤의 -ed/-ing 단어는 형용사이므로 동사 후보에서 제외
+    const firstVerbPosition = wordParts.findIndex(({ word }, position) => {
+      if (!(isLikelyVerb(word) || isModal(word))) return false;
+      // 문장 중간의 대문자 단어는 고유명사(Alfred 등)이므로 동사가 아님
+      if (position > 0 && /^[A-Z]/.test(word)) return false;
+      const previousWord = position > 0 ? wordParts[position - 1].word : "";
+      if (previousWord && isDeterminerWord(previousWord)) return false;
+      return true;
+    });
+    if (firstVerbPosition < 0) return escapeHtml(text);
+    const verbWords = wordParts.map(({ word }) => word);
+    const verbEnd = collectVerbPhraseEnd(verbWords, firstVerbPosition);
+    wordParts.slice(firstVerbPosition, verbEnd).forEach(({ index }) => verbWordIndexes.add(index));
+    if (syntaxRole === "subject-verb") {
+      let preVerbParts = wordParts.slice(0, firstVerbPosition);
+      if (startsWithPreposition(text)) {
+        // 전치사구로 시작하면 동사 바로 앞의 핵심 명사구만 주어로 표시
+        const lastPart = preVerbParts[preVerbParts.length - 1];
+        if (lastPart && isSubjectPronounWord(lastPart.word)) {
+          preVerbParts = [lastPart];
+        } else {
+          let start = preVerbParts.length - 1;
+          while (
+            start > 0 &&
+            !isPreposition(preVerbParts[start - 1].word) &&
+            !/^(them|him|us|me)$/.test(cleanWord(preVerbParts[start - 1].word))
+          ) {
+            start -= 1;
+          }
+          preVerbParts = preVerbParts.slice(start);
+        }
+      }
+      preVerbParts.forEach(({ word, index }) => {
+        if (!isConnectorWord(word) && !isRelativeWord(word) && !isAdverbWord(word) && !isPreposition(word)) subjectWordIndexes.add(index);
+      });
     }
-    searchIndex = found + 1;
+  } else if (syntaxRole === "subject") {
+    // 주어 청크 안에 관계사절이 붙어 있으면 핵심 명사구까지만 강조합니다.
+    let cut = wordParts.findIndex(({ word }, position) => position > 0 && isRelativeWord(word));
+    if (cut > 0 && isPreposition(wordParts[cut - 1].word)) cut -= 1;
+    const headParts = cut > 0 ? wordParts.slice(0, cut) : wordParts;
+    headParts.forEach(({ word, index }) => {
+      if (!isRelativeWord(word)) subjectWordIndexes.add(index);
+    });
   }
-  return ranges;
-}
 
-function normalizeSyntaxTarget(value) {
-  return String(value || "")
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
+  const firstSubjectIndex = subjectWordIndexes.size ? Math.min(...subjectWordIndexes) : -1;
+  const firstVerbIndex = verbWordIndexes.size ? Math.min(...verbWordIndexes) : -1;
 
-function hasWordBoundary(text, start, end) {
-  const before = text[start - 1] || "";
-  const after = text[end] || "";
-  return !/[a-z']/i.test(before) && !/[a-z']/i.test(after);
+  return parts
+    .map((part, index) => {
+      const escaped = escapeHtml(part);
+      if (subjectWordIndexes.has(index)) {
+        const badge = index === firstSubjectIndex ? '<span class="syntax-tag tag-subject" aria-label="주어">S</span>' : "";
+        return `${badge}<span class="syntax-subject">${escaped}</span>`;
+      }
+      if (verbWordIndexes.has(index)) {
+        const badge = index === firstVerbIndex ? '<span class="syntax-tag tag-verb" aria-label="동사">V</span>' : "";
+        return `${badge}<span class="syntax-verb">${escaped}</span>`;
+      }
+      return escaped;
+    })
+    .join("");
 }
 
 function isVerbRole(role, text = "", grammar = "") {

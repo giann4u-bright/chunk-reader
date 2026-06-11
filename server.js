@@ -151,30 +151,64 @@ async function handleAnalyze(req, res) {
     text,
   ].join("\n");
 
-  const openAiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.2,
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+  let openAiResponse;
+  try {
+    openAiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        temperature: 0.2,
+      }),
+    });
+  } catch (error) {
+    console.error("openai_fetch_failed:", error.message);
+    sendJson(res, 504, { error: "ai_request_timeout" });
+    return;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!openAiResponse.ok) {
     const detail = await openAiResponse.text();
-    console.error(detail);
+    console.error("openai_error:", openAiResponse.status, detail.slice(0, 500));
     sendJson(res, 502, { error: "ai_request_failed" });
     return;
   }
 
   const data = await openAiResponse.json();
   const content = data.choices?.[0]?.message?.content || "{}";
-  sendJson(res, 200, JSON.parse(content));
+  let parsed = null;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    // 응답이 잘렸거나 JSON 앞뒤에 다른 텍스트가 붙은 경우 복구 시도
+    const start = content.indexOf("{");
+    const end = content.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        parsed = JSON.parse(content.slice(start, end + 1));
+      } catch {
+        parsed = null;
+      }
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    console.error("ai_json_parse_failed:", String(content).slice(0, 400));
+    sendJson(res, 502, { error: "ai_response_invalid" });
+    return;
+  }
+
+  sendJson(res, 200, parsed);
 }
 
 function readJson(req) {
