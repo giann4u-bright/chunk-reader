@@ -874,6 +874,24 @@ select {
   background: var(--verb);
 }
 
+.sentence-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.sentence-nav span {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #30384a;
+}
+
+.hidden-sentence {
+  display: none;
+}
+
 .my-translation {
   padding: 12px 14px;
   border-top: 1px solid var(--line);

@@ -60,6 +60,10 @@
               <input id="myFirstMode" type="checkbox" />
               내 해석 먼저
             </label>
+            <label class="toggle-label">
+              <input id="singleSentence" type="checkbox" />
+              한 문장씩 보기
+            </label>
           </div>
 
           <div class="service-note">
@@ -115,6 +119,12 @@
           <div id="syntaxLegend" class="syntax-legend" hidden>
             <span class="legend-item subject"><strong>S</strong> 주어</span>
             <span class="legend-item verb"><strong>V</strong> 동사</span>
+          </div>
+
+          <div id="sentenceNav" class="sentence-nav" hidden>
+            <button id="prevSentence" class="ghost-button" type="button">← 이전 문장</button>
+            <span id="sentenceNavLabel"></span>
+            <button id="nextSentence" class="ghost-button" type="button">다음 문장 →</button>
           </div>
 
           <div id="resultArea" class="result-area empty">

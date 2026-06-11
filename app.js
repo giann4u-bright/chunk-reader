@@ -201,6 +201,11 @@ const phraseHints = [
 const els = {
   imageInput: document.querySelector("#imageInput"),
   myFirstMode: document.querySelector("#myFirstMode"),
+  singleSentence: document.querySelector("#singleSentence"),
+  sentenceNav: document.querySelector("#sentenceNav"),
+  sentenceNavLabel: document.querySelector("#sentenceNavLabel"),
+  prevSentence: document.querySelector("#prevSentence"),
+  nextSentence: document.querySelector("#nextSentence"),
   noticeBanner: document.querySelector("#noticeBanner"),
   syntaxLegend: document.querySelector("#syntaxLegend"),
   dropZone: document.querySelector("#dropZone"),
@@ -256,6 +261,7 @@ function saveSession() {
         level: els.chunkLevel.value,
         showGrammar: els.showGrammar.checked,
         myFirstMode: els.myFirstMode?.checked || false,
+        singleSentence: els.singleSentence?.checked || false,
         analysis: currentAnalysis,
         passageInsight: currentPassageInsight,
         myTranslations,
@@ -439,7 +445,7 @@ function collectVerbPhraseEnd(words, verbIndex) {
   let adverbEnd = skipAdverbs(words, index);
   let next = cleanWord(words[adverbEnd]);
 
-  if (isModal(head) && next && isLikelyBaseVerb(next)) {
+  if (isModal(head) && next && (isLikelyBaseVerb(next) || (!isPreposition(next) && !isDeterminerWord(next) && !isSubjectPronounWord(next)))) {
     index = adverbEnd + 1;
     if (isHaveAux(next) || isBeVerbLike(next)) return collectVerbPhraseEnd(words, adverbEnd);
     return index;
@@ -1002,6 +1008,7 @@ function renderPassageInsight(insight) {
 function renderResults(blocks) {
   els.resultArea.innerHTML = "";
   const myFirst = Boolean(els.myFirstMode?.checked) && activeView !== "clean";
+  const singleSentence = Boolean(els.singleSentence?.checked) && activeView !== "clean";
   els.resultArea.className = `result-area ${activeView === "clean" ? "clean-view" : ""} ${myFirst ? "my-first-view" : ""}`.trim();
   if (els.syntaxLegend) els.syntaxLegend.hidden = !blocks.length || activeView === "clean";
 
@@ -1010,6 +1017,7 @@ function renderResults(blocks) {
     els.resultArea.innerHTML = "<p>지문을 넣으면 문장별 끊어읽기와 해석 칸이 만들어집니다.</p>";
     setStats(0, 0, 0);
     renderPassageInsight(null);
+    if (els.sentenceNav) els.sentenceNav.hidden = true;
     return;
   }
 
@@ -1021,6 +1029,9 @@ function renderResults(blocks) {
 
   blocks.forEach((block, blockIndex) => {
     const node = els.sentenceTemplate.content.cloneNode(true);
+    if (singleSentence && blockIndex !== activeFocus.blockIndex) {
+      node.querySelector(".sentence-block").classList.add("hidden-sentence");
+    }
     node.querySelector(".sentence-index").textContent = `문장 ${blockIndex + 1}`;
     const translation = node.querySelector(".translation");
     translation.textContent = block.translation;
@@ -1109,6 +1120,19 @@ function renderResults(blocks) {
 
   els.resultArea.append(fragment);
   setStats(blocks.length, chunkTotal, wordTotal);
+  updateSentenceNav(blocks, singleSentence);
+}
+
+function updateSentenceNav(blocks, active) {
+  if (!els.sentenceNav) return;
+  if (!active || !blocks.length) {
+    els.sentenceNav.hidden = true;
+    return;
+  }
+  els.sentenceNav.hidden = false;
+  els.sentenceNavLabel.textContent = `문장 ${activeFocus.blockIndex + 1} / ${blocks.length}`;
+  els.prevSentence.disabled = activeFocus.blockIndex === 0;
+  els.nextSentence.disabled = activeFocus.blockIndex >= blocks.length - 1;
 }
 
 function resetFocusPosition() {
@@ -1235,6 +1259,22 @@ function getMainClauseSyntaxRoles(chunks) {
     const verbLike = isVerbRole(role, text, role ? grammar : "");
     const nominalSubject = isNominalSubjectChunk(text, grammar);
 
+    // "Without them we would stand..." 같이 전치사구로 시작하지만 주어+동사를 품은 청크
+    if (
+      !subjectStarted &&
+      !foundMainVerb &&
+      startsWithPreposition(text) &&
+      containsInnerSubjectVerb(text) &&
+      !startsAdverbial &&
+      !startsRelative &&
+      !/\b(who|which|whose|whom)\b/i.test(text)
+    ) {
+      roles.set(index, "subject-verb");
+      subjectStarted = true;
+      foundMainVerb = true;
+      return;
+    }
+
     if (skippingAdverbial && adverbialSawVerb && isPotentialMainSubject(chunk)) {
       skippingAdverbial = false;
       adverbialSawVerb = false;
@@ -1341,14 +1381,40 @@ function highlightSyntaxWords(text, syntaxRole = "", grammar = "") {
   const verbWordIndexes = new Set();
 
   if (syntaxRole === "verb" || syntaxRole === "subject-verb") {
-    const firstVerbPosition = wordParts.findIndex(({ word }) => isLikelyVerb(word) || isModal(word));
+    // "The renowned ..."처럼 한정사 바로 뒤의 -ed/-ing 단어는 형용사이므로 동사 후보에서 제외
+    const firstVerbPosition = wordParts.findIndex(({ word }, position) => {
+      if (!(isLikelyVerb(word) || isModal(word))) return false;
+      // 문장 중간의 대문자 단어는 고유명사(Alfred 등)이므로 동사가 아님
+      if (position > 0 && /^[A-Z]/.test(word)) return false;
+      const previousWord = position > 0 ? wordParts[position - 1].word : "";
+      if (previousWord && isDeterminerWord(previousWord)) return false;
+      return true;
+    });
     if (firstVerbPosition < 0) return escapeHtml(text);
     const verbWords = wordParts.map(({ word }) => word);
     const verbEnd = collectVerbPhraseEnd(verbWords, firstVerbPosition);
     wordParts.slice(firstVerbPosition, verbEnd).forEach(({ index }) => verbWordIndexes.add(index));
     if (syntaxRole === "subject-verb") {
-      wordParts.slice(0, firstVerbPosition).forEach(({ word, index }) => {
-        if (!isConnectorWord(word) && !isRelativeWord(word) && !isAdverbWord(word)) subjectWordIndexes.add(index);
+      let preVerbParts = wordParts.slice(0, firstVerbPosition);
+      if (startsWithPreposition(text)) {
+        // 전치사구로 시작하면 동사 바로 앞의 핵심 명사구만 주어로 표시
+        const lastPart = preVerbParts[preVerbParts.length - 1];
+        if (lastPart && isSubjectPronounWord(lastPart.word)) {
+          preVerbParts = [lastPart];
+        } else {
+          let start = preVerbParts.length - 1;
+          while (
+            start > 0 &&
+            !isPreposition(preVerbParts[start - 1].word) &&
+            !/^(them|him|us|me)$/.test(cleanWord(preVerbParts[start - 1].word))
+          ) {
+            start -= 1;
+          }
+          preVerbParts = preVerbParts.slice(start);
+        }
+      }
+      preVerbParts.forEach(({ word, index }) => {
+        if (!isConnectorWord(word) && !isRelativeWord(word) && !isAdverbWord(word) && !isPreposition(word)) subjectWordIndexes.add(index);
       });
     }
   } else if (syntaxRole === "subject") {
@@ -1434,6 +1500,23 @@ function startsWithAdverbialClauseMarker(text) {
 
 function startsWithRelativeClauseMarker(text) {
   return /^(who|which|whose|whom)\b/i.test(text);
+}
+
+function isDeterminerWord(word) {
+  return /^(the|a|an|this|these|those|my|your|his|her|its|our|their|some|any|each|every|no|such|many|few|several|both|all|most|more|very|quite|so)$/.test(cleanWord(word));
+}
+
+function isSubjectPronounWord(word) {
+  return /^(i|you|we|they|he|she|it|one)$/.test(cleanWord(word));
+}
+
+function containsInnerSubjectVerb(text) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  return words.some((word, index) => {
+    if (index === 0) return false;
+    if (!isSubjectPronounWord(words[index - 1])) return false;
+    return isModal(word) || isBeVerbLike(word) || isHaveAux(word) || isLikelyVerb(word);
+  });
 }
 
 function verbsOnlyInsideEmbeddedClause(text) {
@@ -1593,6 +1676,14 @@ els.myFirstMode?.addEventListener("change", () => {
   saveSession();
 });
 
+els.singleSentence?.addEventListener("change", () => {
+  renderResults(currentAnalysis);
+  saveSession();
+});
+
+els.prevSentence?.addEventListener("click", () => moveFocusToChunk(activeFocus.blockIndex - 1, 0));
+els.nextSentence?.addEventListener("click", () => moveFocusToChunk(activeFocus.blockIndex + 1, 0));
+
 els.resultArea.addEventListener("click", (event) => {
   if (!currentAnalysis.length || activeView === "clean") return;
   if (event.target.closest(".chunk-item, .focus-controls, .exam-points, .translation, .my-translation")) return;
@@ -1626,6 +1717,7 @@ if (savedSession) {
   if (savedSession.level) els.chunkLevel.value = savedSession.level;
   els.showGrammar.checked = savedSession.showGrammar !== false;
   if (els.myFirstMode) els.myFirstMode.checked = Boolean(savedSession.myFirstMode);
+  if (els.singleSentence) els.singleSentence.checked = Boolean(savedSession.singleSentence);
   myTranslations = savedSession.myTranslations || {};
   lastAnalyzedText = normalizeText(savedSession.text || "");
   currentAnalysis = savedSession.analysis;
