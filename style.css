@@ -695,11 +695,43 @@ select {
 .syntax-subject {
   color: var(--subject);
   font-weight: 950;
+  background: var(--subject-soft);
+  border-bottom: 2px solid var(--subject);
+  border-radius: 3px;
+  padding: 0 1px;
 }
 
 .syntax-verb {
   color: var(--verb);
   font-weight: 950;
+  background: var(--verb-soft);
+  border-bottom: 2px solid var(--verb);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.syntax-tag {
+  display: inline-block;
+  margin-right: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 900;
+  color: #fff;
+  vertical-align: super;
+  line-height: 1.4;
+}
+
+.tag-subject {
+  background: var(--subject);
+}
+
+.tag-verb {
+  background: var(--verb);
+}
+
+.clean-view .syntax-tag {
+  display: none;
 }
 
 .chunk-note {
@@ -803,6 +835,93 @@ select {
   .result-pane {
     min-height: 520px;
   }
+}
+
+.notice-banner {
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  border: 1px solid #f3c6cb;
+  border-radius: 10px;
+  background: #fdf1f2;
+  color: #8c2330;
+  font-size: 0.92rem;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.syntax-legend {
+  display: flex;
+  gap: 14px;
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: #516172;
+}
+
+.legend-item strong {
+  display: inline-block;
+  padding: 0 5px;
+  margin-right: 4px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.72rem;
+}
+
+.legend-item.subject strong {
+  background: var(--subject);
+}
+
+.legend-item.verb strong {
+  background: var(--verb);
+}
+
+.my-translation {
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: #fffdf4;
+  display: grid;
+  gap: 8px;
+}
+
+.my-translation label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #6b5a1e;
+}
+
+.my-translation-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #e3d9b3;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  resize: vertical;
+  background: #fff;
+}
+
+.my-translation .compare-button {
+  justify-self: start;
+}
+
+.my-first-view .chunk-translation,
+.my-first-view .sentence-block:not(.compared) .translation {
+  display: none;
+}
+
+.my-first-view .sentence-block.compared .chunk-translation {
+  display: block;
+}
+
+.my-first-view .reveal-button {
+  display: none;
+}
+
+.clean-view .my-translation {
+  display: none;
 }
 
 @media (max-width: 560px) {

@@ -200,6 +200,9 @@ const phraseHints = [
 
 const els = {
   imageInput: document.querySelector("#imageInput"),
+  myFirstMode: document.querySelector("#myFirstMode"),
+  noticeBanner: document.querySelector("#noticeBanner"),
+  syntaxLegend: document.querySelector("#syntaxLegend"),
   dropZone: document.querySelector("#dropZone"),
   previewWrap: document.querySelector("#previewWrap"),
   previewImage: document.querySelector("#previewImage"),
@@ -227,10 +230,53 @@ let activeView = "study";
 let currentAnalysis = [];
 let currentPassageInsight = null;
 let activeFocus = { blockIndex: 0, chunkIndex: 0 };
+let myTranslations = {};
+let comparedSentences = new Set();
+const aiResultCache = new Map();
+
+const STORAGE_KEY = "chunkReaderSession";
 
 function setState(text, variant = "") {
   els.ocrState.textContent = text;
   els.ocrState.className = `state-pill ${variant}`.trim();
+}
+
+function showNotice(message) {
+  if (!els.noticeBanner) return;
+  els.noticeBanner.textContent = message;
+  els.noticeBanner.hidden = !message;
+}
+
+function saveSession() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        text: els.sourceText.value,
+        level: els.chunkLevel.value,
+        showGrammar: els.showGrammar.checked,
+        myFirstMode: els.myFirstMode?.checked || false,
+        analysis: currentAnalysis,
+        passageInsight: currentPassageInsight,
+        myTranslations,
+        savedAt: Date.now(),
+      }),
+    );
+  } catch {
+    /* 저장 공간 부족 등은 조용히 무시 */
+  }
+}
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.analysis) || !data.analysis.length) return null;
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeText(text) {
@@ -621,9 +667,18 @@ function getChunkNote(chunk, level = els.chunkLevel.value) {
   return "";
 }
 
+let lastAnalyzedText = "";
+
 async function analyzeText() {
+  const normalizedInput = normalizeText(els.sourceText.value);
   const sentences = splitSentences(els.sourceText.value);
   const level = els.chunkLevel.value;
+
+  if (normalizedInput !== lastAnalyzedText) {
+    myTranslations = {};
+    comparedSentences = new Set();
+    lastAnalyzedText = normalizedInput;
+  }
 
   if (!sentences.length) {
     currentAnalysis = [];
@@ -633,27 +688,45 @@ async function analyzeText() {
     return;
   }
 
-  setState("해석 중", "busy");
-  els.analyzeButton.disabled = true;
-
+  showNotice("");
   const fallbackBlocks = buildFallbackAnalysis(sentences, level);
   let passageInsight = buildFallbackPassageInsight();
   let blocks = fallbackBlocks;
 
-  try {
-    const aiAnalysis = await requestAiAnalysis(normalizeText(els.sourceText.value), level);
-    if (Array.isArray(aiAnalysis.sentences) && aiAnalysis.sentences.length) {
-      blocks = sanitizeAiBlocks(aiAnalysis.sentences, fallbackBlocks, level);
-      passageInsight = normalizePassageInsight(aiAnalysis.passage) || passageInsight;
-      setState("AI 해석 완료");
-    } else {
-      setState("청킹 완료");
+  const isSample = normalizedInput === normalizeText(sampleText);
+  const cacheKey = `${level}|${normalizedInput}`;
+  const cached = aiResultCache.get(cacheKey);
+
+  if (isSample) {
+    // 샘플 지문은 데모 해석이 내장되어 있어 AI를 호출하지 않습니다.
+    setState("예시 해석");
+  } else if (cached) {
+    blocks = cached.blocks;
+    passageInsight = cached.passageInsight || passageInsight;
+    setState("AI 해석 완료");
+  } else {
+    setState("해석 중", "busy");
+    els.analyzeButton.disabled = true;
+    els.analyzeButton.textContent = "AI 해석 중…";
+
+    try {
+      const aiAnalysis = await requestAiAnalysis(normalizedInput, level);
+      if (Array.isArray(aiAnalysis.sentences) && aiAnalysis.sentences.length) {
+        blocks = sanitizeAiBlocks(aiAnalysis.sentences, fallbackBlocks, level);
+        passageInsight = normalizePassageInsight(aiAnalysis.passage) || passageInsight;
+        aiResultCache.set(cacheKey, { blocks, passageInsight });
+        setState("AI 해석 완료");
+      } else {
+        setState("청킹 완료");
+      }
+    } catch (error) {
+      console.info("AI analysis unavailable:", error);
+      setState("해석 불러오기 실패", "error");
+      showNotice("AI 해석을 불러오지 못했어요. 끊어읽기는 그대로 볼 수 있어요. 잠시 후 청킹하기를 다시 눌러 주세요.");
+    } finally {
+      els.analyzeButton.disabled = false;
+      els.analyzeButton.textContent = "청킹하기";
     }
-  } catch (error) {
-    console.info("AI analysis unavailable:", error);
-    setState(blocks[0]?.source === "demo" ? "예시 해석" : "서버 미연결");
-  } finally {
-    els.analyzeButton.disabled = false;
   }
 
   currentAnalysis = blocks;
@@ -661,6 +734,7 @@ async function analyzeText() {
   resetFocusPosition();
   renderPassageInsight(currentPassageInsight);
   renderResults(blocks);
+  saveSession();
 }
 
 function buildFallbackAnalysis(sentences, level) {
@@ -680,7 +754,7 @@ function buildFallbackAnalysis(sentences, level) {
     return {
       sentence,
       chunks,
-      translation: "AI 해석 서버가 연결되면 이 문장을 자연스러운 한국어로 보여줍니다.",
+      translation: "이 문장의 AI 해석을 아직 불러오지 못했어요. 청킹하기를 다시 눌러 보세요.",
       points: {},
       source: "fallback",
     };
@@ -927,7 +1001,9 @@ function renderPassageInsight(insight) {
 
 function renderResults(blocks) {
   els.resultArea.innerHTML = "";
-  els.resultArea.className = `result-area ${activeView === "clean" ? "clean-view" : ""}`;
+  const myFirst = Boolean(els.myFirstMode?.checked) && activeView !== "clean";
+  els.resultArea.className = `result-area ${activeView === "clean" ? "clean-view" : ""} ${myFirst ? "my-first-view" : ""}`.trim();
+  if (els.syntaxLegend) els.syntaxLegend.hidden = !blocks.length || activeView === "clean";
 
   if (!blocks.length) {
     els.resultArea.className = "result-area empty";
@@ -955,6 +1031,32 @@ function renderResults(blocks) {
       translation.hidden = !translation.hidden;
       event.currentTarget.textContent = translation.hidden ? "전체 해석" : "해석 숨기기";
     });
+
+    const myBox = node.querySelector(".my-translation");
+    if (myBox) {
+      myBox.hidden = !myFirst;
+      if (myFirst) {
+        const blockElement = node.querySelector(".sentence-block");
+        const input = myBox.querySelector(".my-translation-input");
+        const compareButton = myBox.querySelector(".compare-button");
+        input.value = myTranslations[blockIndex] || "";
+        input.addEventListener("input", (event) => {
+          myTranslations[blockIndex] = event.target.value;
+          saveSession();
+        });
+        const applyCompared = (compared) => {
+          blockElement.classList.toggle("compared", compared);
+          translation.hidden = !compared;
+          compareButton.textContent = compared ? "AI 해석 숨기기" : "AI 해석과 비교";
+        };
+        applyCompared(comparedSentences.has(blockIndex));
+        compareButton.addEventListener("click", () => {
+          if (comparedSentences.has(blockIndex)) comparedSentences.delete(blockIndex);
+          else comparedSentences.add(blockIndex);
+          applyCompared(comparedSentences.has(blockIndex));
+        });
+      }
+    }
 
     const list = node.querySelector(".chunk-list");
     const normalizedChunks = block.chunks.map((chunk) => {
@@ -1239,11 +1341,20 @@ function highlightSyntaxWords(text, syntaxRole = "", grammar = "") {
     });
   }
 
+  const firstSubjectIndex = subjectWordIndexes.size ? Math.min(...subjectWordIndexes) : -1;
+  const firstVerbIndex = verbWordIndexes.size ? Math.min(...verbWordIndexes) : -1;
+
   return parts
     .map((part, index) => {
       const escaped = escapeHtml(part);
-      if (subjectWordIndexes.has(index)) return `<span class="syntax-subject">${escaped}</span>`;
-      if (verbWordIndexes.has(index)) return `<span class="syntax-verb">${escaped}</span>`;
+      if (subjectWordIndexes.has(index)) {
+        const badge = index === firstSubjectIndex ? '<span class="syntax-tag tag-subject" aria-label="주어">S</span>' : "";
+        return `${badge}<span class="syntax-subject">${escaped}</span>`;
+      }
+      if (verbWordIndexes.has(index)) {
+        const badge = index === firstVerbIndex ? '<span class="syntax-tag tag-verb" aria-label="동사">V</span>' : "";
+        return `${badge}<span class="syntax-verb">${escaped}</span>`;
+      }
       return escaped;
     })
     .join("");
@@ -1450,9 +1561,14 @@ els.showGrammar.addEventListener("change", () => {
 
 els.chunkLevel.addEventListener("change", analyzeText);
 
+els.myFirstMode?.addEventListener("change", () => {
+  renderResults(currentAnalysis);
+  saveSession();
+});
+
 els.resultArea.addEventListener("click", (event) => {
   if (!currentAnalysis.length || activeView === "clean") return;
-  if (event.target.closest(".chunk-item, .focus-controls, .exam-points, .translation")) return;
+  if (event.target.closest(".chunk-item, .focus-controls, .exam-points, .translation, .my-translation")) return;
   moveFocusBy(1);
 });
 
@@ -1477,5 +1593,27 @@ els.tabs.forEach((tab) => {
   });
 });
 
-els.sourceText.value = sampleText;
-analyzeText();
+const savedSession = loadSession();
+if (savedSession) {
+  els.sourceText.value = savedSession.text || "";
+  if (savedSession.level) els.chunkLevel.value = savedSession.level;
+  els.showGrammar.checked = savedSession.showGrammar !== false;
+  if (els.myFirstMode) els.myFirstMode.checked = Boolean(savedSession.myFirstMode);
+  myTranslations = savedSession.myTranslations || {};
+  lastAnalyzedText = normalizeText(savedSession.text || "");
+  currentAnalysis = savedSession.analysis;
+  currentPassageInsight = savedSession.passageInsight || null;
+  if (currentAnalysis[0]?.source === "ai") {
+    aiResultCache.set(`${els.chunkLevel.value}|${lastAnalyzedText}`, {
+      blocks: currentAnalysis,
+      passageInsight: currentPassageInsight,
+    });
+  }
+  resetFocusPosition();
+  renderPassageInsight(currentPassageInsight);
+  renderResults(currentAnalysis);
+  setState("지난 학습 이어보기");
+} else {
+  els.sourceText.value = sampleText;
+  analyzeText();
+}

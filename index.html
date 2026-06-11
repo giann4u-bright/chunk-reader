@@ -56,11 +56,15 @@
               <input id="showGrammar" type="checkbox" checked />
               내신 포인트
             </label>
+            <label class="toggle-label">
+              <input id="myFirstMode" type="checkbox" />
+              내 해석 먼저
+            </label>
           </div>
 
           <div class="service-note">
-            <strong>학생용 화면</strong>
-            <span>학생은 API 키 없이 사진과 지문만 사용합니다. 자연스러운 해석은 서버가 안전하게 AI에 요청합니다.</span>
+            <strong>사용 방법</strong>
+            <span>사진을 올리면 글자를 자동으로 읽어 와요. 추출된 텍스트를 확인한 뒤 청킹하기를 누르세요.</span>
           </div>
 
           <button class="primary-button" id="analyzeButton" type="button">청킹하기</button>
@@ -106,6 +110,13 @@
             </div>
           </section>
 
+          <div id="noticeBanner" class="notice-banner" hidden></div>
+
+          <div id="syntaxLegend" class="syntax-legend" hidden>
+            <span class="legend-item subject"><strong>S</strong> 주어</span>
+            <span class="legend-item verb"><strong>V</strong> 동사</span>
+          </div>
+
           <div id="resultArea" class="result-area empty">
             <p>지문을 넣으면 문장별 끊어읽기와 해석 칸이 만들어집니다.</p>
           </div>
@@ -125,6 +136,12 @@
           </div>
         </div>
         <div class="chunk-list"></div>
+        <div class="my-translation" hidden>
+          <label>내 해석 쓰기
+            <textarea class="my-translation-input" rows="2" placeholder="이 문장을 내 말로 해석해 보세요."></textarea>
+          </label>
+          <button class="ghost-button compare-button" type="button">AI 해석과 비교</button>
+        </div>
         <div class="exam-points" hidden></div>
         <p class="translation" hidden></p>
       </article>
