@@ -816,6 +816,7 @@ function sanitizeAiBlocks(aiBlocks, fallbackBlocks, level = "balanced") {
       sentence: normalizeText(String(ai.original || fallback.sentence)),
       chunks: chunks.filter((chunk) => chunk.text),
       translation: String(ai.translation || fallback.translation).trim(),
+      syntax: normalizeSyntax(ai.syntax || fallback.syntax),
       points: normalizePoints(ai.points || fallback.points),
       source: ai.translation ? "ai" : "fallback",
     };
@@ -940,6 +941,13 @@ function normalizePoints(points = {}) {
     structure: String(points.structure || "").trim(),
     pronouns: String(points.pronouns || "").trim(),
     flow: String(points.flow || "").trim(),
+  };
+}
+
+function normalizeSyntax(syntax = {}) {
+  return {
+    subject: String(syntax.subject || syntax.mainSubject || "").trim(),
+    verb: String(syntax.verb || syntax.mainVerb || "").trim(),
   };
 }
 
@@ -1081,13 +1089,12 @@ function renderResults(blocks) {
         role: normalizeRole(typeof chunk === "string" ? "" : chunk.role, text, grammar, { infer: !hasExplicitRole }),
       };
     });
-    const mainClauseRoles = getMainClauseSyntaxRoles(normalizedChunks);
+    const syntaxTargets = normalizeSyntax(block.syntax);
     setupFocusControls(node, blockIndex, focusMeta);
 
     normalizedChunks.forEach((chunk, chunkIndex) => {
       const chunkText = chunk.text;
       const chunkNote = els.showGrammar.checked ? chunk.grammar : "";
-      const syntaxRole = mainClauseRoles.get(chunkIndex) || "";
       const chunkTranslation = chunk.translation;
       chunkTotal += 1;
       const item = document.createElement("div");
@@ -1106,7 +1113,7 @@ function renderResults(blocks) {
       item.innerHTML = `
         <span class="chunk-number">${chunkIndex + 1}</span>
         <div class="chunk-body">
-          <p class="chunk-text">${highlightSyntaxWords(chunkText, syntaxRole, chunkNote)}</p>
+          <p class="chunk-text">${highlightSyntaxWords(chunkText, syntaxTargets)}</p>
           ${chunkTranslation ? `<p class="chunk-translation">${escapeHtml(chunkTranslation)}</p>` : ""}
           ${chunkNote ? `<p class="chunk-note">${escapeHtml(chunkNote)}</p>` : ""}
         </div>
@@ -1370,80 +1377,65 @@ function getMainClauseSyntaxRoles(chunks) {
   return roles;
 }
 
-function highlightSyntaxWords(text, syntaxRole = "", grammar = "") {
+function highlightSyntaxWords(text, syntax = {}) {
   if (isDiscourseChunk(text)) return escapeHtml(text);
 
-  const parts = String(text || "").match(/[A-Za-z']+|[^A-Za-z']+/g) || [];
-  const wordParts = parts
-    .map((part, index) => ({ part, index, word: part.match(/^[A-Za-z']+$/) ? part : "" }))
-    .filter((part) => part.word);
-  const subjectWordIndexes = new Set();
-  const verbWordIndexes = new Set();
+  const source = String(text || "");
+  const ranges = [
+    ...findSyntaxRanges(source, syntax.subject, "subject"),
+    ...findSyntaxRanges(source, syntax.verb, "verb"),
+  ].sort((a, b) => a.start - b.start || b.end - a.end);
 
-  if (syntaxRole === "verb" || syntaxRole === "subject-verb") {
-    // "The renowned ..."처럼 한정사 바로 뒤의 -ed/-ing 단어는 형용사이므로 동사 후보에서 제외
-    const firstVerbPosition = wordParts.findIndex(({ word }, position) => {
-      if (!(isLikelyVerb(word) || isModal(word))) return false;
-      // 문장 중간의 대문자 단어는 고유명사(Alfred 등)이므로 동사가 아님
-      if (position > 0 && /^[A-Z]/.test(word)) return false;
-      const previousWord = position > 0 ? wordParts[position - 1].word : "";
-      if (previousWord && isDeterminerWord(previousWord)) return false;
-      return true;
-    });
-    if (firstVerbPosition < 0) return escapeHtml(text);
-    const verbWords = wordParts.map(({ word }) => word);
-    const verbEnd = collectVerbPhraseEnd(verbWords, firstVerbPosition);
-    wordParts.slice(firstVerbPosition, verbEnd).forEach(({ index }) => verbWordIndexes.add(index));
-    if (syntaxRole === "subject-verb") {
-      let preVerbParts = wordParts.slice(0, firstVerbPosition);
-      if (startsWithPreposition(text)) {
-        // 전치사구로 시작하면 동사 바로 앞의 핵심 명사구만 주어로 표시
-        const lastPart = preVerbParts[preVerbParts.length - 1];
-        if (lastPart && isSubjectPronounWord(lastPart.word)) {
-          preVerbParts = [lastPart];
-        } else {
-          let start = preVerbParts.length - 1;
-          while (
-            start > 0 &&
-            !isPreposition(preVerbParts[start - 1].word) &&
-            !/^(them|him|us|me)$/.test(cleanWord(preVerbParts[start - 1].word))
-          ) {
-            start -= 1;
-          }
-          preVerbParts = preVerbParts.slice(start);
-        }
-      }
-      preVerbParts.forEach(({ word, index }) => {
-        if (!isConnectorWord(word) && !isRelativeWord(word) && !isAdverbWord(word) && !isPreposition(word)) subjectWordIndexes.add(index);
-      });
+  if (!ranges.length) return escapeHtml(source);
+
+  const parts = [];
+  let cursor = 0;
+  ranges.forEach((range) => {
+    if (range.start < cursor) return;
+    if (range.start > cursor) parts.push(escapeHtml(source.slice(cursor, range.start)));
+    const className = range.type === "subject" ? "syntax-subject" : "syntax-verb";
+    parts.push(`<span class="${className}">${escapeHtml(source.slice(range.start, range.end))}</span>`);
+    cursor = range.end;
+  });
+  if (cursor < source.length) parts.push(escapeHtml(source.slice(cursor)));
+  return parts.join("");
+}
+
+function findSyntaxRanges(text, target, type) {
+  const needle = String(target || "").trim();
+  if (!needle) return [];
+  const normalizedNeedle = normalizeSyntaxTarget(needle);
+  const normalizedText = normalizeSyntaxTarget(text);
+  if (!normalizedNeedle || normalizedNeedle.length < 2) return [];
+
+  const ranges = [];
+  let searchIndex = 0;
+  while (searchIndex <= normalizedText.length) {
+    const found = normalizedText.indexOf(normalizedNeedle, searchIndex);
+    if (found === -1) break;
+    const end = found + normalizedNeedle.length;
+    if (hasWordBoundary(normalizedText, found, end)) {
+      ranges.push({ start: found, end, type });
+      break;
     }
-  } else if (syntaxRole === "subject") {
-    // 주어 청크 안에 관계사절이 붙어 있으면 핵심 명사구까지만 강조합니다.
-    let cut = wordParts.findIndex(({ word }, position) => position > 0 && isRelativeWord(word));
-    if (cut > 0 && isPreposition(wordParts[cut - 1].word)) cut -= 1;
-    const headParts = cut > 0 ? wordParts.slice(0, cut) : wordParts;
-    headParts.forEach(({ word, index }) => {
-      if (!isRelativeWord(word)) subjectWordIndexes.add(index);
-    });
+    searchIndex = found + 1;
   }
+  return ranges;
+}
 
-  const firstSubjectIndex = subjectWordIndexes.size ? Math.min(...subjectWordIndexes) : -1;
-  const firstVerbIndex = verbWordIndexes.size ? Math.min(...verbWordIndexes) : -1;
+function normalizeSyntaxTarget(value) {
+  return String(value || "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 
-  return parts
-    .map((part, index) => {
-      const escaped = escapeHtml(part);
-      if (subjectWordIndexes.has(index)) {
-        const badge = index === firstSubjectIndex ? '<span class="syntax-tag tag-subject" aria-label="주어">S</span>' : "";
-        return `${badge}<span class="syntax-subject">${escaped}</span>`;
-      }
-      if (verbWordIndexes.has(index)) {
-        const badge = index === firstVerbIndex ? '<span class="syntax-tag tag-verb" aria-label="동사">V</span>' : "";
-        return `${badge}<span class="syntax-verb">${escaped}</span>`;
-      }
-      return escaped;
-    })
-    .join("");
+function hasWordBoundary(text, start, end) {
+  const before = text[start - 1] || "";
+  const after = text[end] || "";
+  return !/[a-z']/i.test(before) && !/[a-z']/i.test(after);
 }
 
 function isVerbRole(role, text = "", grammar = "") {
