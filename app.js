@@ -669,7 +669,7 @@ function getChunkNote(chunk, level = els.chunkLevel.value) {
 
 let lastAnalyzedText = "";
 
-async function analyzeText() {
+async function analyzeText(force = false) {
   const normalizedInput = normalizeText(els.sourceText.value);
   const sentences = splitSentences(els.sourceText.value);
   const level = els.chunkLevel.value;
@@ -700,7 +700,7 @@ async function analyzeText() {
   if (isSample) {
     // 샘플 지문은 데모 해석이 내장되어 있어 AI를 호출하지 않습니다.
     setState("예시 해석");
-  } else if (cached) {
+  } else if (cached && !force) {
     blocks = cached.blocks;
     passageInsight = cached.passageInsight || passageInsight;
     setState("AI 해석 완료");
@@ -1283,7 +1283,7 @@ function getMainClauseSyntaxRoles(chunks) {
         subjectStarted = true;
         return;
       }
-      if (verbLike && !nominalSubject) {
+      if (verbLike && !nominalSubject && !verbsOnlyInsideEmbeddedClause(text)) {
         roles.set(index, "subject-verb");
         subjectStarted = true;
         foundMainVerb = true;
@@ -1294,7 +1294,7 @@ function getMainClauseSyntaxRoles(chunks) {
       return;
     }
 
-    if (!subjectStarted && (nominalSubject || (!verbLike && isPotentialMainSubject(chunk)))) {
+    if (!subjectStarted && (nominalSubject || ((!verbLike || verbsOnlyInsideEmbeddedClause(text)) && isPotentialMainSubject(chunk)))) {
       roles.set(index, "subject");
       subjectStarted = true;
       return;
@@ -1336,7 +1336,11 @@ function highlightSyntaxWords(text, syntaxRole = "", grammar = "") {
       });
     }
   } else if (syntaxRole === "subject") {
-    wordParts.forEach(({ word, index }) => {
+    // 주어 청크 안에 관계사절이 붙어 있으면 핵심 명사구까지만 강조합니다.
+    let cut = wordParts.findIndex(({ word }, position) => position > 0 && isRelativeWord(word));
+    if (cut > 0 && isPreposition(wordParts[cut - 1].word)) cut -= 1;
+    const headParts = cut > 0 ? wordParts.slice(0, cut) : wordParts;
+    headParts.forEach(({ word, index }) => {
       if (!isRelativeWord(word)) subjectWordIndexes.add(index);
     });
   }
@@ -1374,7 +1378,7 @@ function isPotentialMainSubject(chunk) {
   const text = String(chunk.text || "").trim();
   if (!text || startsWithClauseMarker(text) || startsWithPreposition(text) || isDiscourseChunk(text)) return false;
   if (["verb", "prep", "relative", "linker", "adverb"].includes(chunk.role)) return false;
-  return chunk.role === "subject" || !looksLikeVerbChunk(text);
+  return chunk.role === "subject" || !looksLikeVerbChunk(text) || verbsOnlyInsideEmbeddedClause(text);
 }
 
 function isExpletiveItChunk(text) {
@@ -1414,6 +1418,13 @@ function startsWithAdverbialClauseMarker(text) {
 
 function startsWithRelativeClauseMarker(text) {
   return /^(who|which|whose|whom)\b/i.test(text);
+}
+
+function verbsOnlyInsideEmbeddedClause(text) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const markerIndex = words.findIndex((word) => /^(who|which|whose|whom|that|where|when|why|how)$/.test(cleanWord(word)));
+  if (markerIndex <= 0) return false;
+  return words.every((word, index) => index >= markerIndex || !(isLikelyVerb(word) || isModal(word)));
 }
 
 function startsWithNounClauseMarker(text) {
@@ -1544,7 +1555,7 @@ els.dropZone.addEventListener("drop", (event) => {
   if (file) readImage(file);
 });
 
-els.analyzeButton.addEventListener("click", analyzeText);
+els.analyzeButton.addEventListener("click", () => analyzeText(true));
 
 els.sampleButton.addEventListener("click", () => {
   els.sourceText.value = sampleText;
@@ -1559,7 +1570,7 @@ els.showGrammar.addEventListener("change", () => {
   renderPassageInsight(currentPassageInsight);
 });
 
-els.chunkLevel.addEventListener("change", analyzeText);
+els.chunkLevel.addEventListener("change", () => analyzeText());
 
 els.myFirstMode?.addEventListener("change", () => {
   renderResults(currentAnalysis);
