@@ -1206,6 +1206,12 @@ function shouldIgnoreReaderShortcut(event) {
   return Boolean(target.closest?.("input, textarea, select, button, [contenteditable='true']"));
 }
 
+function hasExplicitVerbChunkAfter(chunks, afterIndex) {
+  return chunks.some(
+    (chunk, index) => index > afterIndex && (chunk.role === "verb" || /동사구|주절 동사|^동사$|be동사|조동사|수동태/.test(String(chunk.grammar || ""))),
+  );
+}
+
 function getMainClauseSyntaxRoles(chunks) {
   const roles = new Map();
   let subjectStarted = false;
@@ -1283,13 +1289,23 @@ function getMainClauseSyntaxRoles(chunks) {
         subjectStarted = true;
         return;
       }
-      if (verbLike && !nominalSubject && !verbsOnlyInsideEmbeddedClause(text)) {
+      if (verbLike && !nominalSubject && !verbsOnlyInsideEmbeddedClause(text) && !hasExplicitVerbChunkAfter(chunks, index)) {
         roles.set(index, "subject-verb");
         subjectStarted = true;
         foundMainVerb = true;
         return;
       }
       roles.set(index, "subject");
+      subjectStarted = true;
+      return;
+    }
+
+    if (
+      !subjectStarted &&
+      isExpletiveItChunk(text) &&
+      chunks.some((later, laterIndex) => laterIndex > index && (later.role === "subject" || isNominalSubjectChunk(String(later.text || ""), String(later.grammar || ""))))
+    ) {
+      awaitingTrueSubject = true;
       subjectStarted = true;
       return;
     }
