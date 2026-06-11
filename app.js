@@ -722,7 +722,7 @@ function sanitizeAiBlocks(aiBlocks, fallbackBlocks, level = "balanced") {
           text: normalizeText(String(chunk.text || fallback.chunks[chunkIndex]?.text || "")),
           translation: String(chunk.translation || "").trim(),
           grammar: String(chunk.grammar || fallback.chunks[chunkIndex]?.grammar || "").trim(),
-          role: normalizeRole(chunk.role || fallback.chunks[chunkIndex]?.role || "", chunk.text || fallback.chunks[chunkIndex]?.text, chunk.grammar || fallback.chunks[chunkIndex]?.grammar),
+          role: normalizeRole(chunk.role, chunk.text || fallback.chunks[chunkIndex]?.text, chunk.grammar || fallback.chunks[chunkIndex]?.grammar, { infer: false }),
         }))
       : fallback.chunks.map((chunk) => ({
           ...chunk,
@@ -748,7 +748,7 @@ function coarsenExamChunks(chunks, fallbackChunks = []) {
   let buffer = null;
 
   chunks.forEach((chunk) => {
-    const current = { ...chunk, role: chunk.role || inferChunkRole(chunk.text, chunk.grammar) };
+    const current = { ...chunk, role: chunk.role || "" };
     if (!buffer) {
       buffer = current;
       return;
@@ -863,11 +863,13 @@ function normalizePoints(points = {}) {
   };
 }
 
-function normalizeRole(role, text = "", grammar = "") {
+function normalizeRole(role, text = "", grammar = "", options = {}) {
+  const shouldInfer = options.infer !== false;
   const normalized = String(role || "").trim().toLowerCase();
   if (["subject", "verb", "object", "complement", "prep", "relative", "linker", "adverb"].includes(normalized)) {
     return normalized;
   }
+  if (!shouldInfer) return "";
   return inferChunkRole(String(text || ""), String(grammar || ""));
 }
 
@@ -958,11 +960,12 @@ function renderResults(blocks) {
     const normalizedChunks = block.chunks.map((chunk) => {
       const text = typeof chunk === "string" ? chunk : chunk.text;
       const grammar = typeof chunk === "string" ? getChunkNote(chunk) : chunk.grammar;
+      const hasExplicitRole = typeof chunk !== "string" && Object.prototype.hasOwnProperty.call(chunk, "role");
       return {
         text,
         translation: typeof chunk === "string" ? "" : chunk.translation,
         grammar,
-        role: normalizeRole(typeof chunk === "string" ? "" : chunk.role, text, grammar),
+        role: normalizeRole(typeof chunk === "string" ? "" : chunk.role, text, grammar, { infer: !hasExplicitRole }),
       };
     });
     const mainClauseRoles = getMainClauseSyntaxRoles(normalizedChunks);
@@ -977,6 +980,7 @@ function renderResults(blocks) {
       const item = document.createElement("div");
       const absoluteChunkIndex = globalChunkIndex;
       item.className = `chunk-item ${getFocusStateClass(absoluteChunkIndex, focusMeta.absoluteIndex)}`;
+      if (absoluteChunkIndex === focusMeta.absoluteIndex) item.dataset.currentChunk = "true";
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("aria-label", `${chunkIndex + 1}번 청크로 이동`);
@@ -1024,6 +1028,7 @@ function setupFocusControls(node, blockIndex, focusMeta) {
 function moveFocusToChunk(blockIndex, chunkIndex) {
   activeFocus = normalizeFocus(currentAnalysis, { blockIndex, chunkIndex });
   renderResults(currentAnalysis);
+  scrollCurrentChunkIntoView();
 }
 
 function activateChunk(blockIndex, chunkIndex, absoluteChunkIndex) {
@@ -1040,6 +1045,7 @@ function moveFocusBy(delta) {
   const nextAbsoluteIndex = Math.min(Math.max(focusMeta.absoluteIndex + delta, 0), focusMeta.total - 1);
   activeFocus = focusFromAbsoluteIndex(currentAnalysis, nextAbsoluteIndex);
   renderResults(currentAnalysis);
+  scrollCurrentChunkIntoView();
 }
 
 function getFocusStateClass(chunkIndex, currentIndex) {
@@ -1083,6 +1089,15 @@ function focusFromAbsoluteIndex(blocks, absoluteIndex) {
   return { blockIndex: lastBlockIndex, chunkIndex: lastChunkIndex };
 }
 
+function scrollCurrentChunkIntoView() {
+  window.requestAnimationFrame(() => {
+    const current = els.resultArea.querySelector("[data-current-chunk='true']");
+    if (!current) return;
+    current.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    current.focus({ preventScroll: true });
+  });
+}
+
 function shouldIgnoreReaderShortcut(event) {
   const target = event.target;
   if (!target) return false;
@@ -1109,7 +1124,7 @@ function getMainClauseSyntaxRoles(chunks) {
     const startsAdverbial = startsWithAdverbialClauseMarker(text);
     const startsRelative = startsWithRelativeClauseMarker(text) || role === "relative";
     const startsNounClause = subjectStarted && (startsWithNounClauseMarker(text) || isNounClauseGrammar(grammar));
-    const verbLike = isVerbRole(role, text, grammar);
+    const verbLike = isVerbRole(role, text, role ? grammar : "");
     const nominalSubject = isNominalSubjectChunk(text, grammar);
 
     if (skippingAdverbial && adverbialSawVerb && isPotentialMainSubject(chunk)) {
@@ -1172,6 +1187,12 @@ function getMainClauseSyntaxRoles(chunks) {
         foundMainVerb = true;
         return;
       }
+      roles.set(index, "subject");
+      subjectStarted = true;
+      return;
+    }
+
+    if (!subjectStarted && (nominalSubject || (!verbLike && isPotentialMainSubject(chunk)))) {
       roles.set(index, "subject");
       subjectStarted = true;
       return;
